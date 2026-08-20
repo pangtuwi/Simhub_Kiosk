@@ -33,6 +33,8 @@ This guide details the complete configuration process for transforming a laptop 
    - [Restarting the Kiosk Browser](#restarting-the-kiosk-browser)
    - [Closing the Kiosk Browser and Opening a Terminal](#closing-the-kiosk-browser-and-opening-a-terminal)
    - [Clearing Browser Cache & Ephemeral Incognito Mode](#clearing-browser-cache--ephemeral-incognito-mode)
+5. [Troubleshooting](#troubleshooting)
+   - [Kiosk Returns to Login Page After a While](#kiosk-returns-to-login-page-after-a-while)
 
 ---
 
@@ -143,6 +145,9 @@ When running with the laptop lid closed, force the primary video output to the e
    # Hide the mouse cursor after 2 seconds of inactivity
    unclutter -idle 2 -root &
 
+   # Kill any residual screensavers
+   killall xfce4-screensaver cinnamon-screensaver mate-screensaver 2>/dev/null
+
    # Reset dirty session crashes to prevent recovery dialog bubbles
    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' ~/.config/chromium/Default/Preferences 2>/dev/null
    sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' ~/.config/chromium/Default/Preferences 2>/dev/null
@@ -150,15 +155,18 @@ When running with the laptop lid closed, force the primary video output to the e
    # Target Webpage URL
    TARGET_URL="http://localhost:5000"
 
-   # Launch Chromium in dedicated kiosk mode
-   chromium-browser \
-     --kiosk \
-     --noerrdialogs \
-     --disable-infobars \
-     --disable-session-crashed-bubble \
-     --check-for-update-interval=31536000 \
-     --incognito \
-     "$TARGET_URL"
+   # Restart loop: relaunch browser automatically if it exits or crashes
+   while true; do
+     chromium-browser \
+       --kiosk \
+       --noerrdialogs \
+       --disable-infobars \
+       --disable-session-crashed-bubble \
+       --check-for-update-interval=31536000 \
+       --incognito \
+       "$TARGET_URL"
+     sleep 2
+   done
    ```
 
 4. Make the script executable:
@@ -194,6 +202,9 @@ To ensure the display never sleeps, blanks, or defaults to a floating OS logo:
 gsettings set org.gnome.desktop.screensaver lock-enabled false
 gsettings set org.gnome.desktop.screensaver idle-activation-enabled false
 gsettings set org.gnome.desktop.session idle-delay 0
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
 
 # Xfce Settings (if using Xfce desktop)
 xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac --create -t int -s 0 2>/dev/null
@@ -319,4 +330,74 @@ rm -rf ~/.cache/chromium/Default/GPUCache/*
 
 # Restart kiosk
 killall chromium-browser 2>/dev/null && bash ~/.config/autostart-scripts/kiosk.sh &
+```
+
+---
+
+## Troubleshooting
+
+### Kiosk Returns to Login Page After a While
+
+**Symptom:** After running for a period of time, the display returns to the Ubuntu login screen instead of showing the dashboard.
+
+**Likely causes:**
+
+| Cause | Description |
+| :--- | :--- |
+| Session / screen lock | The desktop lock screen activates and covers the kiosk view |
+| Idle timeout / auto-logout | GNOME or the display manager ends the session due to inactivity |
+| System sleep or suspend | The machine sleeps and the session is reset on wake |
+| Chromium exit or crash | Chromium exits and, with no restart loop, the desktop is exposed |
+
+**Recommended fix:**
+
+1. **Apply the resilience patch** on an existing install (no clean reinstall needed):
+   ```bash
+   chmod +x step2.sh
+   sudo ./step2.sh
+   ```
+   This script will:
+   - Disable GNOME and Xfce lock/sleep settings more completely.
+   - Rewrite `~/.config/autostart-scripts/kiosk.sh` to use a browser restart loop so Chromium relaunches automatically if it exits or crashes.
+
+2. **Manual steps** (if you prefer to apply the changes yourself):
+
+   Disable GNOME power/lock settings:
+   ```bash
+   gsettings set org.gnome.desktop.screensaver lock-enabled false
+   gsettings set org.gnome.desktop.screensaver idle-activation-enabled false
+   gsettings set org.gnome.desktop.session idle-delay 0
+   gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+   gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+   gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+   ```
+
+   Add a browser restart loop to `~/.config/autostart-scripts/kiosk.sh` (replace the final `chromium-browser ...` line):
+   ```bash
+   while true; do
+     chromium-browser \
+       --kiosk \
+       --incognito \
+       --noerrdialogs \
+       --disable-infobars \
+       --disable-session-crashed-bubble \
+       --check-for-update-interval=31536000 \
+       "$TARGET_URL"
+     sleep 2
+   done
+   ```
+
+3. **Reboot** (or restart the kiosk manually) to apply all changes:
+   ```bash
+   sudo reboot
+   ```
+
+**Checking the logs** if the problem persists:
+```bash
+# Display manager / session logs
+journalctl -b -u gdm3
+journalctl -b -u lightdm
+
+# General system log
+journalctl -b --no-pager | grep -i "session\|sleep\|lock\|suspend" | tail -50
 ```

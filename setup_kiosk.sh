@@ -73,6 +73,9 @@ if command -v gsettings &> /dev/null; then
   sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.desktop.screensaver lock-enabled false 2>/dev/null || true
   sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.desktop.screensaver idle-activation-enabled false 2>/dev/null || true
   sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true
+  sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' 2>/dev/null || true
+  sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing' 2>/dev/null || true
+  sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.settings-daemon.plugins.power idle-dim false 2>/dev/null || true
 fi
 
 # Xfce Settings (if installed)
@@ -112,17 +115,22 @@ sed -i 's/"exit_type":"Crashed"/"exit_type":"Normal"/' ~/.config/chromium/Defaul
 
 EOF
 
-# Append configured browser command
+# Append configured browser command wrapped in a restart loop
 cat << EOF >> "${AUTOSTART_DIR}/kiosk.sh"
-# Launch Kiosk
-${BROWSER_BIN} \
-  --kiosk \
-  --incognito \
-  --noerrdialogs \
-  --disable-infobars \
-  --disable-session-crashed-bubble \
-  --check-for-update-interval=31536000 \
-  "${KIOSK_URL}"
+TARGET_URL="${KIOSK_URL}"
+
+# Restart loop: relaunch browser automatically if it exits or crashes
+while true; do
+  ${BROWSER_BIN} \\
+    --kiosk \\
+    --incognito \\
+    --noerrdialogs \\
+    --disable-infobars \\
+    --disable-session-crashed-bubble \\
+    --check-for-update-interval=31536000 \\
+    "\$TARGET_URL"
+  sleep 2
+done
 EOF
 
 chmod +x "${AUTOSTART_DIR}/kiosk.sh"
