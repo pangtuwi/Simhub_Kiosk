@@ -1,6 +1,6 @@
 # Ubuntu 26.04 LTS Kiosk & Remote Display Setup Guide
 
-This guide details the complete configuration process for transforming a laptop running **Ubuntu 26.04 LTS** (or compatible Debian/Ubuntu derivatives) into an unattended, always-on full-screen Web Kiosk (e.g., for OctoPrint, Home Assistant, telemetry dashboards, or system monitors) connected to an external display with the laptop lid closed, complete with full Remote Desktop (VNC) access and background service persistence.
+This guide details the complete configuration process for transforming a laptop running **Ubuntu 26.04 LTS** (or compatible Debian/Ubuntu derivatives) into an unattended, always-on full-screen Web viewer for Simhub dashboards.
 
 ---
 
@@ -31,6 +31,7 @@ This guide details the complete configuration process for transforming a laptop 
 4. [Day-to-Day Operations & Maintenance](#day-to-day-operations--maintenance)
    - [Keyboard Shortcuts (Remote Desktop)](#keyboard-shortcuts-remote-desktop)
    - [Restarting the Kiosk Browser](#restarting-the-kiosk-browser)
+   - [Closing the Kiosk Browser and Opening a Terminal](#closing-the-kiosk-browser-and-opening-a-terminal)
    - [Clearing Browser Cache & Ephemeral Incognito Mode](#clearing-browser-cache--ephemeral-incognito-mode)
 
 ---
@@ -290,14 +291,25 @@ rm -rf ~/.local/share/keyrings/*
 | **Close Kiosk Window** | `Option + F4` | `Alt + F4` |
 | **Hard Refresh Page** | `Control + Shift + R` | `Ctrl + F5` |
 
+### Closing the Kiosk Browser and Opening a Terminal
+If you need to stop the kiosk before restarting it:
+```bash
+killall chromium-browser chromium google-chrome 2>/dev/null
+```
+Then open a terminal with the shortcut above, or launch Terminal from the desktop menu.
+
 ### Restarting the Kiosk Browser
 To restart the kiosk window over SSH or terminal:
 ```bash
-killall chromium-browser chromium google-chrome 2>/dev/null
 bash ~/.config/autostart-scripts/kiosk.sh &
 ```
 
-### Clearing Browser Cache
+### Full Restart in One Go
+```bash
+killall chromium-browser chromium google-chrome 2>/dev/null && bash ~/.config/autostart-scripts/kiosk.sh &
+```
+
+### Clearing Browser Cache & Ephemeral Incognito Mode
 If assets or UI elements get stuck:
 ```bash
 # Delete cache directories
