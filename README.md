@@ -1,9 +1,15 @@
 # Simhub_Kiosk
 Setup for a headless web viewer for Simhub Dashboards
 
-read KIOSK.md for Ubuntu 26.04 LTS Kiosk & Remote Display Setup Guide
+Read [KIOSK.md](KIOSK.md) for the full Ubuntu 26.04 LTS Kiosk & Remote Display Setup Guide, including a [Troubleshooting](KIOSK.md#troubleshooting) section covering the common issue where the kiosk returns to the login page after running for a while.
 
-setup_kiosk.sh provided as run script
+`setup_kiosk.sh` is provided as the main installer script.
+
+If you have already run the installer and want to apply kiosk stability improvements without a clean reinstall, use the patch script:
+```bash
+chmod +x step2.sh
+sudo ./step2.sh
+```
 
 ## Day-to-Day Operations
 
