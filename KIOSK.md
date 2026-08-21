@@ -1,6 +1,6 @@
 # Ubuntu 26.04 LTS Kiosk & Remote Display Setup Guide
 
-This guide details the complete configuration process for transforming a laptop running **Ubuntu 26.04 LTS** (or compatible Debian/Ubuntu derivatives) into an unattended, always-on full-screen Web viewer for Simhub dashboards.
+This guide details the complete configuration process for transforming a laptop running **Ubuntu 26.04 LTS** (or compatible Debian/Ubuntu derivatives) into an unattended, always-on full-screen Web Dashboard Kiosk with remote viewing and control capabilities.
 
 ---
 
