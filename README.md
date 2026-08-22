@@ -17,6 +17,15 @@ sudo ./step2.sh
 ```
 It's safe to run from any directory — every path it touches is resolved from the kiosk's login user's home directory, not from where you invoke it. If it's run from an already-root shell (`sudo -s`/`sudo -i` first) it can't tell who that login user is and will warn you; pass `--user <name>` to set it explicitly. Add `--url <url>` to override the detected kiosk URL, or `-y` to skip the confirmation prompt for unattended re-runs. Run `sudo ./step2.sh --help` for details.
 
+## Diagnosing Issues
+
+If the kiosk still won't connect over VNC, or `echo $XDG_SESSION_TYPE` still reports `wayland` after applying the fixes above, run the read-only diagnostic script and share its output when asking for help:
+```bash
+chmod +x diagnosis.sh
+./diagnosis.sh
+```
+It makes no changes to the system — it just collects GDM config, available desktop sessions, the AccountsService session preference, VNC/firewall state, GPU info, and SSH state into one place. (It calls `sudo` for the couple of commands that need it — e.g. `ss -tlnp` — so you'll be prompted for your password partway through if you're not already root.)
+
 ## Day-to-Day Operations
 
 ### Close the Kiosk Browser and Open a Terminal
