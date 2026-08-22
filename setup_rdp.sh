@@ -161,10 +161,43 @@ as_target_user() {
   sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="$USER_BUS" "$@"
 }
 echo -e "${GREEN}  [OK] Found an active session bus for ${TARGET_USER}.${NC}"
+TARGET_USER_HOME=$(eval echo "~${TARGET_USER}")
+
+# 3b. Repair a misnamed default keyring, if one exists -----------------------
+# GDM's PAM auto-unlock (pam_gnome_keyring.so, already correctly present in
+# /etc/pam.d/gdm-autologin's auth and session stacks on this system - that
+# was checked and ruled out as the cause) only ever looks for a keyring
+# literally named "login" (~/.local/share/keyrings/login.keyring). Confirmed
+# on real hardware: after this kiosk's keyring was wiped and recreated, the
+# first thing to touch it was grdctl storing RDP credentials rather than an
+# interactive login - which made libsecret auto-create its own generically
+# named default collection ("Default_keyring") instead of a "login"-named
+# one. PAM then has nothing to even attempt unlocking, which is exactly
+# "gkr-pam: no password is available for user" / "couldn't unlock the login
+# keyring" - not a failed unlock, a missing target.
+echo -e "${BLUE}[*] Checking keyring naming (PAM auto-unlock requires 'login')...${NC}"
+KEYRINGS_DIR="${TARGET_USER_HOME}/.local/share/keyrings"
+DEFAULT_POINTER="${KEYRINGS_DIR}/default"
+if [ -f "$DEFAULT_POINTER" ] && [ ! -f "${KEYRINGS_DIR}/login.keyring" ]; then
+  DEFAULT_NAME=$(cat "$DEFAULT_POINTER" 2>/dev/null)
+  if [ -n "$DEFAULT_NAME" ] && [ "$DEFAULT_NAME" != "login" ] && [ -f "${KEYRINGS_DIR}/${DEFAULT_NAME}.keyring" ]; then
+    echo -e "${YELLOW}[WARNING] Default keyring is named '${DEFAULT_NAME}', not 'login' - PAM${NC}"
+    echo -e "${YELLOW}          auto-unlock can never find it. Renaming to login.keyring...${NC}"
+    mv "${KEYRINGS_DIR}/${DEFAULT_NAME}.keyring" "${KEYRINGS_DIR}/login.keyring"
+    echo "login" > "$DEFAULT_POINTER"
+    chown "${TARGET_USER}:${TARGET_USER}" "${KEYRINGS_DIR}/login.keyring" "$DEFAULT_POINTER"
+    echo -e "${GREEN}  [OK] Renamed. The currently-running gnome-keyring-daemon already has the${NC}"
+    echo -e "${GREEN}       old file open and won't notice until it restarts - a reboot after${NC}"
+    echo -e "${GREEN}       this script finishes is required for PAM to find it.${NC}"
+  else
+    echo -e "${GREEN}  [OK] Nothing to rename (already 'login', or no default keyring yet).${NC}"
+  fi
+else
+  echo -e "${GREEN}  [OK] Default keyring is already named 'login', or none exists yet.${NC}"
+fi
 
 # 4. Generate a self-signed TLS certificate, owned by the kiosk user ---------
 echo -e "${BLUE}[4/5] Configuring TLS certificate...${NC}"
-TARGET_USER_HOME=$(eval echo "~${TARGET_USER}")
 CERT_DIR="${TARGET_USER_HOME}/.local/share/gnome-remote-desktop-certs"
 CERT_FILE="${CERT_DIR}/rdp-tls.crt"
 KEY_FILE="${CERT_DIR}/rdp-tls.key"
@@ -242,17 +275,6 @@ cat > "${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh" <<'SCRIPTEOF'
 # login - grdctl calls are idempotent.
 
 sleep 5
-
-# Autologin never types a password, so GNOME Keyring's normal auto-unlock
-# (pam_gnome_keyring.so, keyed off the interactively-entered login
-# password) never actually fires here - not even for a keyring
-# deliberately created with a blank password. Confirmed on real hardware:
-# the "Authentication required, the login keyring did not get unlocked"
-# prompt came back on a later reboot even after wiping
-# ~/.local/share/keyrings/* and recreating it blank once - that earlier
-# fix depended on unlock-at-creation timing that isn't reliable across
-# every boot. Unlock it explicitly here instead of depending on that.
-echo -n "" | gnome-keyring-daemon --unlock 2>/dev/null
 
 CERT_DIR="$HOME/.local/share/gnome-remote-desktop-certs"
 CRED_FILE="${CERT_DIR}/rdp-credentials.conf"
