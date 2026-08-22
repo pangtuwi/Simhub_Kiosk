@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# step2.sh — Kiosk Resilience Patch (run on an existing install)
+# Kiosk Session Resilience Patch (run on an existing install)
 # Applies kiosk stability improvements without requiring a clean reinstall.
 # Safe to run multiple times (idempotent where possible).
 # Does NOT remove user data or reset the kiosk URL.
@@ -27,6 +27,8 @@ TARGET_USER="${SUDO_USER:-$USER}"
 USER_HOME=$(eval echo "~$TARGET_USER")
 AUTOSTART_DIR="${USER_HOME}/.config/autostart-scripts"
 KIOSK_SCRIPT="${AUTOSTART_DIR}/kiosk.sh"
+GDM_CONF="/etc/gdm3/custom.conf"
+X11VNC_SERVICE="/etc/systemd/system/x11vnc.service"
 
 if [ "$TARGET_USER" = "root" ]; then
   echo -e "${YELLOW}[WARNING] Target user is root. Recommended to run under a standard user with sudo.${NC}"
@@ -39,14 +41,12 @@ KIOSK_URL="http://localhost:5000"
 BROWSER_BIN="chromium-browser"
 
 if [ -f "$KIOSK_SCRIPT" ]; then
-  # Try to read the URL from the existing script
   DETECTED_URL=$(grep -oP '(?<=TARGET_URL=")[^"]+' "$KIOSK_SCRIPT" 2>/dev/null || true)
   if [ -n "$DETECTED_URL" ]; then
     KIOSK_URL="$DETECTED_URL"
     echo -e "${GREEN}[*] Detected existing kiosk URL: ${KIOSK_URL}${NC}"
   fi
 
-  # Try to detect the browser binary
   for bin in chromium-browser chromium google-chrome; do
     if grep -q "$bin" "$KIOSK_SCRIPT" 2>/dev/null; then
       BROWSER_BIN="$bin"
@@ -55,7 +55,6 @@ if [ -f "$KIOSK_SCRIPT" ]; then
   done
 fi
 
-# Fall back to whichever browser is actually installed
 if ! command -v "$BROWSER_BIN" &> /dev/null; then
   if command -v chromium-browser &> /dev/null; then
     BROWSER_BIN="chromium-browser"
@@ -68,8 +67,75 @@ fi
 
 echo -e "${GREEN}[*] Browser binary: ${BROWSER_BIN}${NC}"
 
-# 2. Strengthen GNOME power and lock settings
-echo -e "${BLUE}[1/3] Applying GNOME / Xfce power management settings...${NC}"
+# 2. Force GDM to use X11 instead of Wayland for VNC compatibility
+echo -e "${BLUE}[1/4] Disabling Wayland in GDM and preserving autologin...${NC}"
+sudo mkdir -p /etc/gdm3
+sudo touch "$GDM_CONF"
+
+if grep -q '^\[daemon\]' "$GDM_CONF"; then
+  :
+else
+  printf '\n[daemon]\n' | sudo tee -a "$GDM_CONF" >/dev/null
+fi
+
+if grep -q '^#\?WaylandEnable=' "$GDM_CONF"; then
+  sudo sed -i 's/^#\?WaylandEnable=.*/WaylandEnable=false/' "$GDM_CONF"
+else
+  if grep -q '^\[daemon\]' "$GDM_CONF"; then
+    if grep -n '^\[daemon\]' "$GDM_CONF" | tail -1 | awk -F: '{print $1}' | xargs -I{} sh -c "sed -n '{}',\$p '$GDM_CONF' | grep -q '^WaylandEnable=false'"; then
+      :
+    else
+      sudo awk 'BEGIN{added=0} {print} /^\[daemon\]$/ && !added {print "WaylandEnable=false"; added=1}' "$GDM_CONF" > "$GDM_CONF.tmp" && sudo mv "$GDM_CONF.tmp" "$GDM_CONF"
+    fi
+  fi
+fi
+
+if ! grep -q '^WaylandEnable=false' "$GDM_CONF"; then
+  if grep -q '^\[daemon\]' "$GDM_CONF"; then
+    sudo awk 'BEGIN{in_daemon=0; inserted=0} /^\[daemon\]$/ {print; in_daemon=1; next} /^\[/ { if (in_daemon && !inserted) {print "WaylandEnable=false"; inserted=1} in_daemon=0; print; next} {print} END { if (in_daemon && !inserted) print "WaylandEnable=false" }' "$GDM_CONF" > "$GDM_CONF.tmp" && sudo mv "$GDM_CONF.tmp" "$GDM_CONF"
+  else
+    printf '\n[daemon]\nWaylandEnable=false\n' | sudo tee -a "$GDM_CONF" >/dev/null
+  fi
+fi
+
+sudo sed -i 's/^#\?AutomaticLoginEnable=.*/AutomaticLoginEnable=true/' "$GDM_CONF" 2>/dev/null || true
+if ! grep -q '^AutomaticLoginEnable=true' "$GDM_CONF"; then
+  printf 'AutomaticLoginEnable=true\n' | sudo tee -a "$GDM_CONF" >/dev/null
+fi
+if [ -n "$TARGET_USER" ] && ! grep -q "^AutomaticLogin=${TARGET_USER}$" "$GDM_CONF"; then
+  if grep -q '^AutomaticLogin=' "$GDM_CONF"; then
+    sudo sed -i "s/^AutomaticLogin=.*/AutomaticLogin=${TARGET_USER}/" "$GDM_CONF"
+  else
+    printf 'AutomaticLogin=%s\n' "$TARGET_USER" | sudo tee -a "$GDM_CONF" >/dev/null
+  fi
+fi
+
+echo -e "${GREEN}  [OK] GDM configured for X11 autologin.${NC}"
+
+# 3. Create / update x11vnc service so remote desktop starts automatically
+echo -e "${BLUE}[2/4] Installing x11vnc systemd service...${NC}"
+cat << 'EOF' | sudo tee "$X11VNC_SERVICE" >/dev/null
+[Unit]
+Description=x11vnc Remote Desktop Server
+After=display-manager.service network.target graphical.target
+Wants=display-manager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now x11vnc || true
+echo -e "${GREEN}  [OK] x11vnc.service installed and enabled.${NC}"
+
+# 4. Strengthen GNOME power and lock settings
+echo -e "${BLUE}[3/4] Applying GNOME / Xfce power management settings...${NC}"
 if command -v gsettings &> /dev/null; then
   sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.desktop.screensaver lock-enabled false 2>/dev/null || true
   sudo -u "$TARGET_USER" dbus-launch gsettings set org.gnome.desktop.screensaver idle-activation-enabled false 2>/dev/null || true
@@ -89,8 +155,8 @@ if command -v xfconf-query &> /dev/null; then
   echo -e "${GREEN}  [OK] Xfce settings applied.${NC}"
 fi
 
-# 3. Rewrite kiosk.sh to use a browser restart loop
-echo -e "${BLUE}[2/3] Updating kiosk launch script with browser restart loop...${NC}"
+# 5. Rewrite kiosk.sh to use a browser restart loop
+echo -e "${BLUE}[4/4] Updating kiosk launch script with browser restart loop...${NC}"
 mkdir -p "$AUTOSTART_DIR"
 
 cat > "$KIOSK_SCRIPT" << KIOSK_EOF
@@ -118,14 +184,14 @@ TARGET_URL="${KIOSK_URL}"
 
 # Restart loop: relaunch browser automatically if it exits or crashes
 while true; do
-  ${BROWSER_BIN} \\
-    --kiosk \\
-    --incognito \\
-    --noerrdialogs \\
-    --disable-infobars \\
-    --disable-session-crashed-bubble \\
-    --check-for-update-interval=31536000 \\
-    "\$TARGET_URL"
+  ${BROWSER_BIN} \
+    --kiosk \
+    --incognito \
+    --noerrdialogs \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --check-for-update-interval=31536000 \
+    "$TARGET_URL"
   sleep 2
 done
 KIOSK_EOF
@@ -134,18 +200,21 @@ chmod +x "$KIOSK_SCRIPT"
 chown "$TARGET_USER:$TARGET_USER" "$KIOSK_SCRIPT"
 echo -e "${GREEN}  [OK] ${KIOSK_SCRIPT} updated.${NC}"
 
-# 4. Kill any running kiosk browser so the updated script takes effect on next autostart
-echo -e "${BLUE}[3/3] Stopping any running kiosk browser instances...${NC}"
+# 6. Kill any running kiosk browser so the updated script takes effect on next autostart
+echo -e "${YELLOW}[*] Stopping any running kiosk browser instances...${NC}"
 killall "$BROWSER_BIN" 2>/dev/null || true
-echo -e "${GREEN}  [OK] Browser stopped (will restart via autostart on next login, or run manually below).${NC}"
 
 echo -e ""
 echo -e "${GREEN}======================================================${NC}"
 echo -e "${GREEN}  Resilience patch applied successfully!               ${NC}"
 echo -e "${GREEN}======================================================${NC}"
 echo -e ""
+echo -e "${YELLOW}Wayland has been disabled in GDM for X11/VNC support.${NC}"
+echo -e "${YELLOW}Reboot is required for the session type change to take effect.${NC}"
+echo -e "${YELLOW}After reboot, verify with: echo \$XDG_SESSION_TYPE  # should be x11${NC}"
+echo -e ""
 echo -e "${YELLOW}To start the kiosk immediately without rebooting:${NC}"
 echo -e "  ${BLUE}bash ${KIOSK_SCRIPT} &${NC}"
 echo -e ""
 echo -e "${YELLOW}Or reboot to apply all settings cleanly:${NC}"
-echo -e "  ${BLUE}sudo reboot${NC}"
+echo -e "  ${BLUE}sudo reboot${NC}
