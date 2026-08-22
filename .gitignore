@@ -1,2 +1,4 @@
-# diagnosis.sh output — contains hostname/LAN info, not meant to be committed
+# diagnosis.sh / setup_rdp.sh output — contains hostname/LAN info, not meant to be committed
 results.txt
+setup_rdp_output.txt
+*_output.txt
