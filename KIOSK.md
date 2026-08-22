@@ -478,9 +478,11 @@ A service that is "active (running)" is **not** proof the connection will work �
    ```
    Its output includes a "Resulting GDM/session configuration" block showing exactly what was written to both files — check that before rebooting.
 
-2. **If it reports "No Xorg session found in /usr/share/xsessions/"**, your system genuinely has no X11 session installed (common on a minimal Ubuntu Desktop install) — `WaylandEnable=false` can't select a session that doesn't exist. Install one, e.g.:
+2. **If it reports "No Xorg session found under /usr/share/xsessions/"**, your system genuinely has no X11 session installed at all — confirmed on real hardware via `ls /usr/share/xsessions/` returning "No such file or directory" while `/usr/share/wayland-sessions/` had the only session present. `WaylandEnable=false` can't select a session that doesn't exist, and no amount of config editing or rebooting fixes that. Both scripts now attempt to install one automatically (`gnome-session-xsession`, falling back to `xserver-xorg`/`xinit`/`ubuntu-session`) before giving up — if it still can't find one afterwards, check what's actually available and install it directly:
    ```bash
-   sudo apt install -y ubuntu-session
+   apt search xsession 2>/dev/null | grep -i gnome
+   sudo apt install -y gnome-session-xsession
+   ls /usr/share/xsessions/          # should now show an *xorg* entry
    ```
    then re-run `step2.sh` and reboot.
 

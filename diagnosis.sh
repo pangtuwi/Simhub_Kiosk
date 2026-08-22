@@ -54,7 +54,7 @@ run "xsessions (X11)" ls -la /usr/share/xsessions/ 2>/dev/null
 run "wayland-sessions" ls -la /usr/share/wayland-sessions/ 2>/dev/null
 
 section "Per-user session preference (AccountsService)"
-run "AccountsService entry" cat "/var/lib/AccountsService/users/${TARGET_USER}"
+run "AccountsService entry" sudo cat "/var/lib/AccountsService/users/${TARGET_USER}"
 
 section "Login session details (alternate check)"
 run "loginctl list-sessions" loginctl list-sessions --no-legend

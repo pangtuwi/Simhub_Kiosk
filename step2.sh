@@ -220,14 +220,38 @@ echo -e "${GREEN}  [OK] GDM configured for X11 autologin.${NC}"
 # + reboot" alone still leaves $XDG_SESSION_TYPE as wayland for an
 # autologin account. Pin that user's saved session to an Xorg one directly.
 echo -e "${BLUE}[*] Pinning ${TARGET_USER}'s saved session to Xorg (AccountsService)...${NC}"
-XORG_SESSION=""
-for f in /usr/share/xsessions/*.desktop; do
-  [ -e "$f" ] || continue
-  base=$(basename "$f" .desktop)
-  case "$base" in
-    *xorg*|*-x11*|*X11*) XORG_SESSION="$base"; break ;;
-  esac
-done
+find_xorg_session() {
+  XORG_SESSION=""
+  for f in /usr/share/xsessions/*.desktop; do
+    [ -e "$f" ] || continue
+    base=$(basename "$f" .desktop)
+    case "$base" in
+      *xorg*|*-x11*|*X11*) XORG_SESSION="$base"; break ;;
+    esac
+  done
+}
+find_xorg_session
+
+if [ -z "$XORG_SESSION" ]; then
+  echo -e "${YELLOW}[WARNING] No Xorg session found under /usr/share/xsessions/ (it may not even${NC}"
+  echo -e "${YELLOW}          exist yet) - only Wayland sessions appear to be installed. x11vnc${NC}"
+  echo -e "${YELLOW}          requires X11 and cannot work on a Wayland-only system. Attempting to${NC}"
+  echo -e "${YELLOW}          install an Xorg session automatically...${NC}"
+  sudo apt-get update -qq || true
+  for pkg in gnome-session-xsession xserver-xorg xinit ubuntu-session; do
+    sudo apt-get install -y "$pkg" 2>&1 | tail -3
+  done
+  find_xorg_session
+  if [ -n "$XORG_SESSION" ]; then
+    echo -e "${GREEN}  [OK] Xorg session now available: ${XORG_SESSION}${NC}"
+  else
+    echo -e "${RED}[ERROR] Still no Xorg session available after attempting install.${NC}"
+    echo -e "${RED}        VNC cannot work until one exists. Check manually with:${NC}"
+    echo -e "${RED}          apt search xsession 2>/dev/null | grep -i gnome${NC}"
+    echo -e "${RED}          ls /usr/share/xsessions/${NC}"
+    echo -e "${RED}        then install whatever package provides it and re-run this script.${NC}"
+  fi
+fi
 
 if [ -n "$XORG_SESSION" ]; then
   ACCOUNTS_FILE="/var/lib/AccountsService/users/${TARGET_USER}"
@@ -244,12 +268,6 @@ if [ -n "$XORG_SESSION" ]; then
     fi
   done
   echo -e "${GREEN}  [OK] ${TARGET_USER}'s saved session pinned to '${XORG_SESSION}' in ${ACCOUNTS_FILE}.${NC}"
-else
-  echo -e "${YELLOW}[WARNING] No Xorg session found in /usr/share/xsessions/ - only Wayland sessions${NC}"
-  echo -e "${YELLOW}          appear to be installed. x11vnc requires X11 and will not work until${NC}"
-  echo -e "${YELLOW}          one is available. Try: sudo apt install -y ubuntu-session${NC}"
-  echo -e "${YELLOW}          (or your desktop environment's Xorg session package), then re-run${NC}"
-  echo -e "${YELLOW}          this script.${NC}"
 fi
 
 echo -e "${BLUE}[*] Resulting GDM/session configuration:${NC}"
