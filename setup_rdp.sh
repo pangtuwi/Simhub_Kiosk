@@ -135,6 +135,26 @@ if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
 else
   echo -e "${GREEN}  [OK] Certificate already exists at ${CERT_FILE}, leaving it in place.${NC}"
 fi
+
+# The system-mode gnome-remote-desktop-daemon runs as the dedicated
+# "gnome-remote-desktop" system user the package creates (confirmed on real
+# hardware: /etc/gnome-remote-desktop itself is owned by that user), not
+# root. Since this script runs the mkdir/openssl calls above via sudo, the
+# certs directory and key end up root-owned - unreadable by the daemon's
+# own user. That reproducibly logs "RDP TLS certificate and key not yet
+# configured properly" and never binds the RDP listener on every restart,
+# not just at boot; chown the cert dir to the daemon's user so it can
+# actually read its own key.
+if id gnome-remote-desktop &> /dev/null; then
+  chown -R gnome-remote-desktop:gnome-remote-desktop "$CERT_DIR"
+else
+  echo -e "${YELLOW}[WARNING] System user 'gnome-remote-desktop' not found - leaving cert${NC}"
+  echo -e "${YELLOW}          ownership as-is. If RDP still won't bind after this script${NC}"
+  echo -e "${YELLOW}          finishes, check which user gnome-remote-desktop.service runs as${NC}"
+  echo -e "${YELLOW}          (systemctl cat gnome-remote-desktop.service) and chown ${CERT_DIR}${NC}"
+  echo -e "${YELLOW}          to that user.${NC}"
+fi
+chmod 700 "$CERT_DIR"
 chmod 600 "$KEY_FILE"
 chmod 644 "$CERT_FILE"
 
