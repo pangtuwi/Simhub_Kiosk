@@ -1,0 +1,55 @@
+======================================================
+  Remote Desktop (RDP) Fallback Setup                 
+======================================================
+------------------------------------------------------
+  Kiosk login user : pangtuwi
+  RDP login user   : pangtuwi
+------------------------------------------------------
+[1/5] Installing gnome-remote-desktop...
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+gnome-remote-desktop is already the newest version (50.2-0ubuntu0.1).
+Solving dependencies... Done
+0 upgraded, 0 newly installed, 0 to remove and 23 not upgraded.
+[2/5] Disabling system/headless RDP mode if previously enabled...
+  [OK] System/headless mode was not enabled.
+[3/5] Checking for pangtuwi's active session...
+  [OK] Found an active session bus for pangtuwi.
+[4/5] Configuring TLS certificate...
+  [OK] Certificate already exists at /home/pangtuwi/.local/share/gnome-remote-desktop-certs/rdp-tls.crt, leaving it in place.
+[5/5] Configuring RDP via grdctl (per-session)...
+  [OK] Per-session RDP configured for pangtuwi.
+[*] Verifying RDP is actually listening on port 3389...
+  [OK] Port 3389 is listening.
+[*] RDP status:
+    Overall:
+    	Unit status: active
+    RDP:
+    	Status: enabled
+    	Port: 3389
+    	Authentication methods: credentials
+    	TLS certificate: /home/pangtuwi/.local/share/gnome-remote-desktop-certs/rdp-tls.crt
+    	TLS fingerprint: 07:23:ef:c3:57:b9:49:71:4c:13:13:ab:50:d1:02:cd:21:de:89:f5:d2:db:88:55:29:90:9e:cd:1a:c9:70:32
+    	TLS key: /home/pangtuwi/.local/share/gnome-remote-desktop-certs/rdp-tls.key
+    	Kerberos keytab: 
+    	View-only: yes
+    	Negotiate port: yes
+    	Username: (hidden)
+    	Password: (hidden)
+======================================================
+             RDP SETUP COMPLETE                       
+======================================================
+Connect from Windows using the built-in Remote Desktop Connection app (mstsc):
+  Computer: 192.168.7.108
+  Username: pangtuwi
+  Password: (the one you just set)
+
+On macOS, use the Microsoft Remote Desktop app from the App Store with the same details.
+
+Note: this uses a self-signed certificate, so your RDP client will warn
+about an untrusted certificate on first connect — that's expected on a
+private LAN kiosk; accept it to continue.
+
+This does not require Wayland to be disabled and works alongside (or
+instead of) the existing x11vnc setup on port 5900.
