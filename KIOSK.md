@@ -309,13 +309,13 @@ This configures **GNOME's built-in Remote Desktop support** (`gnome-remote-deskt
 
 `setup_rdp.sh` checks for and repairs the misnamed-keyring case: if the default keyring exists under any name other than `login` (and no `login.keyring` already exists, so it never clobbers one), it renames the file and updates the `default` pointer to `login` before any `grdctl` calls run — a reboot afterward is required, since the currently-running `gnome-keyring-daemon` already has the old file open by inode and won't notice a rename until it restarts.
 
-**This alone did not fully resolve it.** Confirmed on real hardware, in order:
+**This alone did not fully resolve it — four attempts were needed before the real fix was found.** Confirmed on real hardware, in order:
 1. Wipe + leave blank on recreation → worked for one reboot, then recurred (wrong keyring name, see above).
 2. Rename to `login.keyring` → the *name* was fixed, but `gkr-pam: couldn't unlock the login keyring` still logged at every boot, and the prompt still appeared.
-3. Removed `pam_gnome_keyring.so` entirely from `/etc/pam.d/gdm-autologin`'s `auth` and `session` stacks (backed up first as `gdm-autologin.bak`) → the prompt **still appeared**, which is actually informative: it rules PAM out as the source entirely. True GDM autologin never transmits any credential through PAM in the first place, so `pam_gnome_keyring.so`'s auth-phase unlock has nothing to work with regardless of the keyring's name, password, or whether the module even runs. The visible "Authentication required" dialog is the secret-service's own prompter, triggered independently the first time something (in this case, `rdp-reassert.sh`'s `grdctl` calls) touches the still-locked `login` collection — confirmed directly: RDP does not work while the popup is open, and starts working within seconds of manually entering something into it.
-4. `rdp-reassert.sh` now also tries `gnome-keyring-daemon --login` and `--unlock` (two separate modes, tried independently since they're not documented as combinable flags) piped an empty password, before its `grdctl` calls — `--login` is the same mode `pam_gnome_keyring.so` itself uses internally, attempted here without needing PAM's involvement at all. **This has not yet been confirmed to work** — it's a reasonable next attempt given the confirmed mechanism, not a verified fix, after three prior attempts each addressed a real but incomplete piece of the picture.
+3. Removed `pam_gnome_keyring.so` entirely from `/etc/pam.d/gdm-autologin`'s `auth` and `session` stacks → the prompt **still appeared**, which was informative rather than a dead end: it ruled PAM out as the source entirely. True GDM autologin never transmits any credential through PAM in the first place, so `pam_gnome_keyring.so`'s auth-phase unlock has nothing to work with regardless of the keyring's name, password, or whether the module even runs. The visible "Authentication required" dialog is the secret-service's own prompter, triggered independently the first time something (in this case, `rdp-reassert.sh`'s `grdctl` calls) touches the still-locked `login` collection.
+4. `rdp-reassert.sh` tried `gnome-keyring-daemon --login` / `--unlock` piped an empty password before its `grdctl` calls → also did not resolve it.
 
-If this also doesn't fully resolve it, the practical fallback that is confirmed to work: type anything into the "Authentication required" prompt once after each reboot (on the physical kiosk screen) — both the desktop and RDP become usable within seconds of doing so. Not unattended, but zero-risk, and a starting point for further diagnosis rather than continuing to guess blind at gnome-keyring/PAM internals.
+**What actually worked:** properly setting the Login keyring's password to blank through Seahorse's real change-password flow, not through any of the above file/command-level workarounds — see [7. Keyring Password Prompt Removal](#7-keyring-password-prompt-removal) below for the exact steps. Confirmed across two clean reboots. The PAM change from attempt 3 was reverted back to stock afterward, since the real fix doesn't depend on it either way. Attempt 4's `gnome-keyring-daemon --login`/`--unlock` calls were left in `rdp-reassert.sh` — harmless now that the keyring is genuinely unencrypted (nothing left to unlock), and a reasonable safety net if this is ever reused on hardware that ends up in a similar state.
 
 Flags: `--user <name>` for the kiosk login user (detection only), `--rdp-user <name>` / `--rdp-password <pass>` to set the RDP login credentials non-interactively, `-y` to skip confirmation. Run `sudo ./setup_rdp.sh --help` for details. It's safe to run alongside an existing x11vnc setup — the two don't conflict, and you can use whichever one actually works on your hardware.
 
@@ -325,13 +325,23 @@ Flags: `--user <name>` for the kiosk login user (detection only), `--rdp-user <n
 
 ### 7. Keyring Password Prompt Removal
 
-Auto-login bypasses entering a user password, leaving the default GNOME Keyring locked. To prevent the *"The login keyring did not get unlocked"* popup:
+Auto-login bypasses entering a user password, leaving the default GNOME Keyring locked. This causes the persistent *"Authentication required, the login keyring did not get unlocked when you logged into your computer"* popup — and, if anything on the system depends on the keyring (e.g. `setup_rdp.sh`'s per-session RDP credentials), that thing won't work until the popup is dismissed.
+
+**The fix that actually works, confirmed across multiple reboots on real hardware, is to properly set the Login keyring's password to blank via Seahorse ("Passwords and Keys") — not by deleting keyring files and hoping whatever touches them next (GDM's own recreation prompt, or an app like `grdctl`) recreates them the same way.** Several file-deletion-based attempts were tried first and each seemed to work for one reboot before the prompt came back — because deleting the files doesn't go through GNOME's actual change-password ceremony, so nothing durable is actually set; a `login.keyring` file existing and being genuinely blank-password/unencrypted are two different things.
 
 ```bash
-# Clear existing password-protected keyrings
-rm -rf ~/.local/share/keyrings/*
+sudo apt install -y seahorse
 ```
-*On subsequent reboot, when prompted to "Choose password for new keyring", leave both fields completely **blank** and confirm.*
+
+Then, on the kiosk's own desktop (reachable via a working remote-desktop connection, or physically):
+
+1. Open **Passwords and Keys** (Seahorse) — via the application menu, or run `seahorse`.
+2. In the left panel, expand **Passwords**, find the **Login** keyring.
+3. Right-click it → **Change Password**.
+4. It will ask for the *current* password first — if a blank current password isn't accepted, try the account's actual login password.
+5. For the **new** password, leave **both fields blank**, and confirm through Ubuntu's warning about storing passwords unencrypted — that's the intended outcome for an autologin kiosk.
+
+This is a one-time action, not something that needs to be repeated on every boot or baked into a script — the change persists correctly once made this way. `pam_gnome_keyring.so` in `/etc/pam.d/gdm-autologin`'s `auth`/`session` stacks (present by default) can be left exactly as shipped; it doesn't need to be disabled or specially configured for this to work, and disabling it (tried during diagnosis) makes no difference either way once the keyring is genuinely blank.
 
 ---
 
