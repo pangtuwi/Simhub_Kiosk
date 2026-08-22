@@ -392,7 +392,7 @@ while true; do
     --disable-infobars \
     --disable-session-crashed-bubble \
     --check-for-update-interval=31536000 \
-    "$TARGET_URL"
+    "\$TARGET_URL"
   sleep 2
 done
 KIOSK_EOF
