@@ -158,7 +158,13 @@ if [ ! -S "$USER_BUS_PATH" ]; then
 fi
 USER_BUS="unix:path=${USER_BUS_PATH}"
 as_target_user() {
-  sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="$USER_BUS" "$@"
+  # timeout: grdctl talks to gnome-shell/mutter over D-Bus, which can hang
+  # indefinitely rather than error out if the secret-service ends up wanting
+  # to show an unlock/create-keyring prompt with no UI surface to show it on
+  # in this non-interactive context - confirmed on real hardware, right
+  # after the keyring-rename repair below disrupted a live daemon. Better to
+  # fail loudly after 20s than hang the whole script forever.
+  timeout 20 sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="$USER_BUS" "$@"
 }
 echo -e "${GREEN}  [OK] Found an active session bus for ${TARGET_USER}.${NC}"
 TARGET_USER_HOME=$(eval echo "~${TARGET_USER}")
@@ -186,9 +192,16 @@ if [ -f "$DEFAULT_POINTER" ] && [ ! -f "${KEYRINGS_DIR}/login.keyring" ]; then
     mv "${KEYRINGS_DIR}/${DEFAULT_NAME}.keyring" "${KEYRINGS_DIR}/login.keyring"
     echo "login" > "$DEFAULT_POINTER"
     chown "${TARGET_USER}:${TARGET_USER}" "${KEYRINGS_DIR}/login.keyring" "$DEFAULT_POINTER"
-    echo -e "${GREEN}  [OK] Renamed. The currently-running gnome-keyring-daemon already has the${NC}"
-    echo -e "${GREEN}       old file open and won't notice until it restarts - a reboot after${NC}"
-    echo -e "${GREEN}       this script finishes is required for PAM to find it.${NC}"
+    echo -e "${GREEN}  [OK] Renamed on disk.${NC}"
+    echo -e "${YELLOW}[*] Stopping here rather than continuing to configure RDP in this same run.${NC}"
+    echo -e "${YELLOW}    The gnome-keyring-daemon already running for this live session still has${NC}"
+    echo -e "${YELLOW}    the old file open and doesn't know about the rename - confirmed on real${NC}"
+    echo -e "${YELLOW}    hardware that continuing on immediately makes the next grdctl call hang${NC}"
+    echo -e "${YELLOW}    indefinitely (it ends up waiting on a keyring prompt with nowhere to be${NC}"
+    echo -e "${YELLOW}    shown). Reboot now, then re-run this script - the freshly-booted session${NC}"
+    echo -e "${YELLOW}    will find the correctly-named keyring from the start.${NC}"
+    echo -e "${YELLOW}      sudo reboot${NC}"
+    exit 0
   else
     echo -e "${GREEN}  [OK] Nothing to rename (already 'login', or no default keyring yet).${NC}"
   fi
@@ -224,16 +237,37 @@ chmod 644 "$CERT_FILE"
 
 # 5. Configure GNOME Remote Desktop in per-session mode ----------------------
 echo -e "${BLUE}[5/5] Configuring RDP via grdctl (per-session)...${NC}"
-as_target_user grdctl rdp set-tls-cert "$CERT_FILE"
-as_target_user grdctl rdp set-tls-key "$KEY_FILE"
-as_target_user grdctl rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
-as_target_user grdctl rdp enable
+run_grdctl_step() {
+  local desc="$1"; shift
+  local rc=0
+  set +e
+  as_target_user "$@"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 124 ]; then
+      echo -e "${RED}[ERROR] '${desc}' timed out after 20s instead of completing.${NC}"
+      echo -e "${RED}        grdctl is likely stuck waiting on a keyring unlock/create prompt${NC}"
+      echo -e "${RED}        that has nowhere to be shown in this non-interactive context.${NC}"
+      echo -e "${RED}        This is expected right after the keyring-rename repair above -${NC}"
+      echo -e "${RED}        reboot now, then re-run this script; the freshly-booted session${NC}"
+      echo -e "${RED}        won't have a live daemon holding the old keyring state open.${NC}"
+    else
+      echo -e "${RED}[ERROR] '${desc}' failed (exit ${rc}).${NC}"
+    fi
+    exit 1
+  fi
+}
+run_grdctl_step "set TLS cert" grdctl rdp set-tls-cert "$CERT_FILE"
+run_grdctl_step "set TLS key" grdctl rdp set-tls-key "$KEY_FILE"
+run_grdctl_step "set credentials" grdctl rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
+run_grdctl_step "enable RDP" grdctl rdp enable
 # GNOME Remote Desktop defaults new RDP configs to view-only (screen visible,
 # keyboard/mouse input ignored) - confirmed on real hardware: connected fine
 # from both Windows and macOS clients, but clicks and typing did nothing
 # until this was disabled. A kiosk needs interactive control, not just a
 # view, so always turn it off.
-as_target_user grdctl rdp disable-view-only
+run_grdctl_step "disable view-only" grdctl rdp disable-view-only
 
 echo -e "${GREEN}  [OK] Per-session RDP configured for ${TARGET_USER} (interactive, not view-only).${NC}"
 
