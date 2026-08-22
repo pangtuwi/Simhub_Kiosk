@@ -5,7 +5,12 @@ Read [KIOSK.md](KIOSK.md) for the full Ubuntu 26.04 LTS Kiosk & Remote Display S
 
 `setup_kiosk.sh` is provided as the main installer script.
 
-If you have already run the installer and want to apply kiosk stability improvements without a clean reinstall, use the patch script:
+### Which script do I need?
+
+- **Clean/fresh Ubuntu install → `setup_kiosk.sh` only.** It already includes every stability fix `step2.sh` applies (the browser restart loop, GNOME/Xfce power hardening, and the x11vnc remote-desktop fixes) — there's nothing `step2.sh` adds on top of it. You do **not** need to also run `step2.sh` afterwards.
+- **Existing install that was set up before these fixes were added (or one you're not sure is current) → `step2.sh`.** It applies the same set of fixes in place, without a clean reinstall, and is safe to run again at any time — it won't remove your kiosk URL or other settings.
+
+If you have an existing install and want to apply kiosk stability improvements without a clean reinstall, use the patch script:
 ```bash
 chmod +x step2.sh
 sudo ./step2.sh

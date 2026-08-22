@@ -43,6 +43,8 @@ This guide details the complete configuration process for transforming a laptop 
 
 A complete automation script `setup_kiosk.sh` is provided in this repository.
 
+**`setup_kiosk.sh` is a complete, self-contained installer.** On a clean/fresh Ubuntu install it is the only script you need — it already includes the browser restart loop, GNOME/Xfce power hardening, and the x11vnc remote-desktop resilience fixes (Xauthority-wait wrapper, firewall rule) described in [Troubleshooting](#troubleshooting) below. Do **not** also run `step2.sh` afterwards; there is nothing left for it to add on a system `setup_kiosk.sh` just configured. `step2.sh` exists solely to bring an *existing* install (set up before these fixes were added, or one you're unsure is current) up to date in place, without a clean reinstall — see [Applying the Resilience Patch](#kiosk-returns-to-login-page-after-a-while) below.
+
 ### Quick Start:
 ```bash
 chmod +x setup_kiosk.sh
