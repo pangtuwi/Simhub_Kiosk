@@ -146,9 +146,36 @@ grdctl --system rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
 grdctl --system rdp enable
 
 systemctl daemon-reload
-systemctl enable --now gnome-remote-desktop.service
+systemctl enable gnome-remote-desktop.service
+# Always restart (not just "enable --now"): if the daemon was already
+# running from a previous boot/run, "enable --now" is a no-op that leaves
+# it running with whatever config it read at its own startup - it does not
+# reload just because grdctl wrote new config. Confirmed on real hardware:
+# the service can come up at boot logging "RDP TLS certificate and key not
+# yet configured properly" and never actually bind its listening socket,
+# even though `grdctl --system status` reports everything correctly
+# configured moments later. A restart forces it to re-read the current
+# config from a clean start.
+systemctl restart gnome-remote-desktop.service
 
-echo -e "${GREEN}  [OK] gnome-remote-desktop configured and enabled.${NC}"
+echo -e "${GREEN}  [OK] gnome-remote-desktop configured and restarted.${NC}"
+
+echo -e "${BLUE}[*] Verifying RDP is actually listening on port 3389...${NC}"
+LISTENING=""
+for i in 1 2 3 4 5; do
+  if ss -tlnp 2>/dev/null | grep -q ':3389 '; then
+    LISTENING=1
+    break
+  fi
+  sleep 1
+done
+if [ -n "$LISTENING" ]; then
+  echo -e "${GREEN}  [OK] Port 3389 is listening.${NC}"
+else
+  echo -e "${RED}[ERROR] Port 3389 is still not listening after restarting the service.${NC}"
+  echo -e "${RED}        RDP will not be reachable. Recent logs:${NC}"
+  journalctl -u gnome-remote-desktop -b --no-pager | tail -20 | sed 's/^/    /'
+fi
 
 # 4. Open the firewall for RDP if ufw is active -------------------------------
 echo -e "${BLUE}[4/4] Checking firewall...${NC}"
