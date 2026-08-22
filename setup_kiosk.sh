@@ -154,8 +154,43 @@ EOF
 
 chown -R "$TARGET_USER:$TARGET_USER" "$AUTOSTART_DESKTOP_DIR"
 
-# 7. Configure Remote Desktop (x11vnc)
-echo -e "${BLUE}[6/7] Configuring x11vnc Server...${NC}"
+# 7. Force X11 (disable Wayland) for VNC compatibility
+echo -e "${BLUE}[6/7] Forcing X11 session (disabling Wayland) and configuring x11vnc Server...${NC}"
+echo -e "${YELLOW}[INFO] x11vnc requires an X11 session. Wayland will be disabled in GDM.${NC}"
+
+GDM_CONF="/etc/gdm3/custom.conf"
+if [ -f "$GDM_CONF" ]; then
+  # If WaylandEnable line exists (commented or not), update it
+  if grep -q '^\s*#\?\s*WaylandEnable=' "$GDM_CONF"; then
+    sed -i 's/^\s*#\?\s*WaylandEnable=.*/WaylandEnable=false/' "$GDM_CONF"
+  # If [daemon] section exists but no WaylandEnable line, insert after [daemon]
+  elif grep -q '^\[daemon\]' "$GDM_CONF"; then
+    sed -i '/^\[daemon\]/a WaylandEnable=false' "$GDM_CONF"
+  # Otherwise append a [daemon] section with the setting
+  else
+    printf '\n[daemon]\nWaylandEnable=false\n' >> "$GDM_CONF"
+  fi
+  echo -e "${GREEN}[*] WaylandEnable=false set in ${GDM_CONF}${NC}"
+else
+  echo -e "${YELLOW}[WARNING] ${GDM_CONF} not found. Creating it with Wayland disabled.${NC}"
+  cat << 'GDMEOF' > "$GDM_CONF"
+[daemon]
+WaylandEnable=false
+GDMEOF
+fi
+
+# Also preserve/ensure AutomaticLogin settings in [daemon]
+if grep -q "AutomaticLoginEnable=" "$GDM_CONF"; then
+  sed -i 's/^\s*#\?\s*AutomaticLoginEnable=.*/AutomaticLoginEnable=true/' "$GDM_CONF"
+else
+  sed -i '/^\[daemon\]/a AutomaticLoginEnable=true' "$GDM_CONF"
+fi
+if grep -qE '^\s*#?\s*AutomaticLogin=[^E]' "$GDM_CONF"; then
+  sed -i "s/^\s*#\?\s*AutomaticLogin=[^E].*/AutomaticLogin=${TARGET_USER}/" "$GDM_CONF"
+else
+  sed -i "/^\[daemon\]/a AutomaticLogin=${TARGET_USER}" "$GDM_CONF"
+fi
+
 echo -e "${YELLOW}Please enter the password you want to use for Remote Desktop (VNC) connections:${NC}"
 x11vnc -storepasswd /etc/x11vnc.pass
 chmod 644 /etc/x11vnc.pass
@@ -163,16 +198,17 @@ chmod 644 /etc/x11vnc.pass
 cat << 'EOF' > /etc/systemd/system/x11vnc.service
 [Unit]
 Description=x11vnc Remote Desktop Server
-After=multi-user.target network.target
+After=display-manager.service network.target graphical.target
+Wants=display-manager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared
+ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
 Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
 EOF
 
 systemctl daemon-reload
@@ -191,7 +227,9 @@ echo -e "Kiosk Target URL:  ${BLUE}${KIOSK_URL}${NC}"
 echo -e "Remote VNC Access: ${BLUE}vnc://${IP_ADDR}:5900${NC}"
 echo -e ""
 echo -e "${YELLOW}Notes:${NC}"
-echo -e "1. Ensure Automatic Login is enabled in your Desktop Display Manager settings."
+echo -e "1. Automatic Login has been configured for ${TARGET_USER} in GDM."
 echo -e "2. When prompted on the first reboot to set a keyring password, leave it blank."
-echo -e "3. Reboot your machine to start the kiosk display:"
+echo -e "3. ${RED}Wayland has been disabled. A reboot is required for X11 and VNC to work correctly.${NC}"
+echo -e "4. After reboot, verify with: ${BLUE}echo \$XDG_SESSION_TYPE${NC} — it should report ${GREEN}x11${NC}."
+echo -e "5. Reboot your machine now to apply all changes:"
 echo -e "   ${BLUE}sudo reboot${NC}"

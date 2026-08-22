@@ -79,7 +79,11 @@ To prevent the laptop from suspending, sleeping, or powering down external displ
 
 ### 2. Display Server & Automatic Login
 
-For `x11vnc` to mirror the physical display directly, ensure your desktop manager uses an **X11 session** (rather than pure Wayland) and enables user auto-login.
+For `x11vnc` to mirror the physical display directly, the desktop session **must use X11** (not Wayland). The installer (`setup_kiosk.sh`) automatically sets `WaylandEnable=false` in `/etc/gdm3/custom.conf`. A reboot is required for this to take effect. After rebooting, confirm the active session type with:
+```bash
+echo $XDG_SESSION_TYPE
+```
+It should report `x11`. If it reports `wayland`, VNC will not work reliably.
 
 #### For GDM3 (Default Ubuntu Desktop):
 Edit `/etc/gdm3/custom.conf`:
@@ -218,7 +222,9 @@ xfconf-query -c xfce4-screensaver -p /lock/enabled --create -t bool -s false 2>/
 
 ### 6. Remote Desktop Setup (x11vnc)
 
-`x11vnc` allows you to view and interact with the physical display (:0) directly.
+> **Requirement:** `x11vnc` works with **X11 sessions only**. The installer automatically disables Wayland in GDM and creates the systemd service. After running the installer, reboot to ensure X11 is active before connecting.
+
+`x11vnc` allows you to view and interact with the physical display (:0) directly. The installer (`setup_kiosk.sh`) handles all steps below automatically.
 
 1. Install `x11vnc`:
    ```bash
@@ -231,30 +237,34 @@ xfconf-query -c xfce4-screensaver -p /lock/enabled --create -t bool -s false 2>/
    sudo chmod 644 /etc/x11vnc.pass
    ```
 
-3. Create the systemd service unit:
-   ```bash
-   sudo nano /etc/systemd/system/x11vnc.service
-   ```
-   Add:
+3. The installer creates `/etc/systemd/system/x11vnc.service` automatically:
    ```ini
    [Unit]
    Description=x11vnc Remote Desktop Server
-   After=multi-user.target network.target
+   After=display-manager.service network.target graphical.target
+   Wants=display-manager.service
 
    [Service]
    Type=simple
-   ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared
+   ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
    Restart=on-failure
    RestartSec=5
 
    [Install]
-   WantedBy=multi-user.target
+   WantedBy=graphical.target
    ```
 
 4. Enable and start the service:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable --now x11vnc
+   ```
+
+5. **Reboot** after installation so the system starts an X11 session. Verify:
+   ```bash
+   echo $XDG_SESSION_TYPE   # should print: x11
+   systemctl status x11vnc
+   sudo ss -tlnp | grep 5900
    ```
 
 ---
