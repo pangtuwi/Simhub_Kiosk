@@ -1,0 +1,249 @@
+pangtuwi@pangtuwi-HP-t630-Thin-Client:~/Downloads$ ./diagnosis.sh 
+
+==============================================================
+  Repo state (confirms which fixes are present)
+==============================================================
+Not inside a git checkout of this repo — can't confirm which commit is checked out.
+
+==============================================================
+  Basic system info
+==============================================================
+$ cat /etc/os-release
+PRETTY_NAME="Ubuntu 26.04 LTS"
+NAME="Ubuntu"
+VERSION_ID="26.04"
+VERSION="26.04 LTS (Resolute Raccoon)"
+VERSION_CODENAME=resolute
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=resolute
+LOGO=ubuntu-logo
+
+$ uname -a
+Linux pangtuwi-HP-t630-Thin-Client 7.0.0-30-generic #30-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 18:22:54 UTC 2026 x86_64 GNU/Linux
+
+$ echo "XDG_SESSION_TYPE=$XDG_SESSION_TYPE"
+XDG_SESSION_TYPE=wayland
+
+$ echo "Running as: $(whoami), target/login user: ${TARGET_USER}"
+Running as: pangtuwi, target/login user: pangtuwi
+
+
+==============================================================
+  GDM configuration
+==============================================================
+$ cat /etc/gdm3/custom.conf
+# GDM configuration storage
+#
+# See /usr/share/gdm/gdm.schemas for a list of available options.
+
+[daemon]
+WaylandEnable=false
+AutomaticLoginEnable=true
+AutomaticLogin=pangtuwi
+
+
+# Enabling automatic login
+
+# Enabling timed login
+#  TimedLoginEnable = true
+#  TimedLogin = user1
+#  TimedLoginDelay = 10
+
+[security]
+
+[debug]
+# Uncomment the line below to turn on debugging
+# More verbose logs
+# Additionally lets the X server dump core if it crashes
+#Enable=true
+
+$ cat /etc/X11/default-display-manager
+/usr/sbin/gdm3
+
+$ systemctl status gdm3 --no-pager -l
+● gdm.service - GNOME Display Manager
+     Loaded: loaded (/usr/lib/systemd/system/gdm.service; disabled; preset: enabled)
+     Active: active (running) since Sat 2026-08-22 12:32:01 BST; 14min ago
+ Invocation: 8affadccd2f54d14811cc114ccc02e54
+   Main PID: 1347 (gdm3)
+      Tasks: 5 (limit: 1932)
+     Memory: 4.6M (peak: 7.2M)
+        CPU: 335ms
+     CGroup: /system.slice/gdm.service
+             └─1347 /usr/sbin/gdm3
+
+Aug 22 12:32:01 pangtuwi-HP-t630-Thin-Client systemd[1]: Starting gdm.service - GNOME Display Manager...
+Aug 22 12:32:01 pangtuwi-HP-t630-Thin-Client systemd[1]: Started gdm.service - GNOME Display Manager.
+Aug 22 12:32:12 pangtuwi-HP-t630-Thin-Client gdm3[1347]: Gdm: It appears that your system does not have a primary GPU! Proceeding with any GPU
+Aug 22 12:32:24 pangtuwi-HP-t630-Thin-Client gdm-autologin][1779]: gkr-pam: no password is available for user
+Aug 22 12:32:24 pangtuwi-HP-t630-Thin-Client gdm-autologin][1779]: pam_unix(gdm-autologin:session): session opened for user pangtuwi(uid=1000) by pangtuwi(uid=0)
+
+
+==============================================================
+  Available desktop sessions
+==============================================================
+$ ls -la /usr/share/xsessions/
+ls: cannot access '/usr/share/xsessions/': No such file or directory
+(command failed or produced no output: xsessions (X11))
+
+$ ls -la /usr/share/wayland-sessions/
+total 20
+drwxr-xr-x   2 root root  4096 Aug 20 18:46 .
+drwxr-xr-x 241 root root 12288 Aug 22 12:42 ..
+-rw-r--r--   1 root root   281 Jun 23 10:32 ubuntu.desktop
+
+
+==============================================================
+  Per-user session preference (AccountsService)
+==============================================================
+$ cat /var/lib/AccountsService/users/pangtuwi
+cat: /var/lib/AccountsService/users/pangtuwi: Permission denied
+(command failed or produced no output: AccountsService entry)
+
+
+==============================================================
+  Login session details (alternate check)
+==============================================================
+$ loginctl list-sessions --no-legend
+1 1000 pangtuwi seat0 1779 user    tty2 no -
+2 1000 pangtuwi -     1882 manager -    no -
+3 1000 pangtuwi -     8242 user    -    no -
+
+$ loginctl show-session 1 -p Type -p Class -p State -p Remote -p Service
+Remote=no
+Service=gdm-autologin
+Type=wayland
+Class=user
+State=active
+
+
+==============================================================
+  GPU / driver (NVIDIA proprietary drivers can affect session selection)
+==============================================================
+$ lspci | grep -iE "vga|3d"
+00:01.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Wani [Radeon R5/R6/R7 Graphics] (rev 88)
+
+$ command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi || echo "nvidia-smi not present"
+nvidia-smi not present
+
+
+==============================================================
+  x11vnc / VNC
+==============================================================
+$ systemctl status x11vnc --no-pager -l
+● x11vnc.service - x11vnc Remote Desktop Server
+     Loaded: loaded (/etc/systemd/system/x11vnc.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2026-08-22 12:45:04 BST; 1min 42s ago
+ Invocation: 699426ce856c4d8db0e3e5665d66fbab
+   Main PID: 8414 (x11vnc-wait.sh)
+      Tasks: 2 (limit: 1932)
+     Memory: 3.2M (peak: 4.5M)
+        CPU: 1.669s
+     CGroup: /system.slice/x11vnc.service
+             ├─8414 /bin/bash /usr/local/bin/x11vnc-wait.sh
+             └─8673 sleep 2
+
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 1.980s CPU time over 2min 6.851s wall clock time, 3.8M memory peak.
+Aug 22 12:45:04 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 6.
+Aug 22 12:45:04 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+
+$ sudo ss -tlnp 2>/dev/null | grep 5900 || echo "nothing listening on 5900"
+nothing listening on 5900
+
+$ command -v ufw >/dev/null 2>&1 && sudo ufw status || echo "ufw not installed"
+Status: inactive
+
+$ journalctl -u x11vnc -b --no-pager
+Aug 22 12:32:23 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+Aug 22 12:34:25 pangtuwi-HP-t630-Thin-Client x11vnc-wait.sh[1694]: x11vnc-wait: timed out waiting for X session/Xauthority
+Aug 22 12:34:25 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:34:25 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:34:25 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 1.758s CPU time over 2min 1.871s wall clock time, 3.5M memory peak.
+Aug 22 12:34:30 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 1.
+Aug 22 12:34:30 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+Aug 22 12:36:32 pangtuwi-HP-t630-Thin-Client x11vnc-wait.sh[5406]: x11vnc-wait: timed out waiting for X session/Xauthority
+Aug 22 12:36:32 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:36:32 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:36:32 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 2.061s CPU time over 2min 6.703s wall clock time, 3.4M memory peak.
+Aug 22 12:36:37 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 2.
+Aug 22 12:36:37 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+Aug 22 12:38:39 pangtuwi-HP-t630-Thin-Client x11vnc-wait.sh[5690]: x11vnc-wait: timed out waiting for X session/Xauthority
+Aug 22 12:38:39 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:38:39 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:38:39 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 2.015s CPU time over 2min 6.706s wall clock time, 3.2M memory peak.
+Aug 22 12:38:44 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 3.
+Aug 22 12:38:44 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+Aug 22 12:40:45 pangtuwi-HP-t630-Thin-Client x11vnc-wait.sh[5990]: x11vnc-wait: timed out waiting for X session/Xauthority
+Aug 22 12:40:45 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:40:45 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:40:46 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 2.073s CPU time over 2min 6.794s wall clock time, 3M memory peak.
+Aug 22 12:40:51 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 4.
+Aug 22 12:40:51 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+Aug 22 12:42:52 pangtuwi-HP-t630-Thin-Client x11vnc-wait.sh[6269]: x11vnc-wait: timed out waiting for X session/Xauthority
+Aug 22 12:42:52 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:42:52 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:42:52 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 1.846s CPU time over 2min 6.582s wall clock time, 3.5M memory peak.
+Aug 22 12:42:57 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 5.
+Aug 22 12:42:57 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client x11vnc-wait.sh[7466]: x11vnc-wait: timed out waiting for X session/Xauthority
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Main process exited, code=exited, status=1/FAILURE
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Failed with result 'exit-code'.
+Aug 22 12:44:59 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Consumed 1.980s CPU time over 2min 6.851s wall clock time, 3.8M memory peak.
+Aug 22 12:45:04 pangtuwi-HP-t630-Thin-Client systemd[1]: x11vnc.service: Scheduled restart job, restart counter is at 6.
+Aug 22 12:45:04 pangtuwi-HP-t630-Thin-Client systemd[1]: Started x11vnc.service - x11vnc Remote Desktop Server.
+
+
+==============================================================
+  SSH (noted as also not working)
+==============================================================
+$ dpkg -l | grep -i openssh-server || echo "openssh-server not installed"
+ii  openssh-server                             1:10.2p1-2ubuntu3.5                        amd64        secure shell (SSH) server, for secure access from remote machines
+
+$ systemctl status ssh --no-pager -l
+● ssh.service - OpenBSD Secure Shell server
+     Loaded: loaded (/usr/lib/systemd/system/ssh.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2026-08-22 12:43:10 BST; 3min 37s ago
+ Invocation: 98b62c7d412a4e1bb03c82807d779851
+TriggeredBy: ● ssh.socket
+       Docs: man:sshd(8)
+             man:sshd_config(5)
+    Process: 7970 ExecStartPre=/usr/sbin/sshd -t (code=exited, status=0/SUCCESS)
+   Main PID: 7972 (sshd)
+      Tasks: 1 (limit: 1932)
+     Memory: 3.9M (peak: 6M)
+        CPU: 183ms
+     CGroup: /system.slice/ssh.service
+             └─7972 "sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"
+
+Aug 22 12:43:10 pangtuwi-HP-t630-Thin-Client systemd[1]: Starting ssh.service - OpenBSD Secure Shell server...
+Aug 22 12:43:10 pangtuwi-HP-t630-Thin-Client sshd[7972]: Server listening on 0.0.0.0 port 22.
+Aug 22 12:43:10 pangtuwi-HP-t630-Thin-Client sshd[7972]: Server listening on :: port 22.
+Aug 22 12:43:10 pangtuwi-HP-t630-Thin-Client systemd[1]: Started ssh.service - OpenBSD Secure Shell server.
+Aug 22 12:44:52 pangtuwi-HP-t630-Thin-Client sshd-session[8242]: Accepted password for pangtuwi from 192.168.7.115 port 51805 ssh2
+Aug 22 12:44:52 pangtuwi-HP-t630-Thin-Client sshd-session[8242]: pam_unix(sshd:session): session opened for user pangtuwi(uid=1000) by pangtuwi(uid=0)
+
+$ sudo ss -tlnp 2>/dev/null | grep ":22 " || echo "nothing listening on 22"
+LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=7972,fd=3),("systemd",pid=1,fd=200))
+LISTEN 0      4096            [::]:22           [::]:*    users:(("sshd",pid=7972,fd=4),("systemd",pid=1,fd=201))
+
+
+==============================================================
+  Network
+==============================================================
+$ hostname -I
+192.168.7.108 192.168.7.47 
+
+$ ip route show default
+default via 192.168.7.1 dev enp1s0 proto static metric 100 
+
+
+==============================================================
+  Diagnosis complete. Copy the full output above and share it.
+==============================================================
