@@ -36,6 +36,7 @@ This guide details the complete configuration process for transforming a laptop 
 5. [Troubleshooting](#troubleshooting)
    - [Kiosk Returns to Login Page After a While](#kiosk-returns-to-login-page-after-a-while)
    - [Cannot Connect from Windows (or macOS) via VNC](#cannot-connect-from-windows-or-macos-via-vnc)
+   - [Session Still Reports Wayland After Disabling It](#session-still-reports-wayland-after-disabling-it)
 
 ---
 
@@ -87,6 +88,8 @@ For `x11vnc` to mirror the physical display directly, the desktop session **must
 echo $XDG_SESSION_TYPE
 ```
 It should report `x11`. If it reports `wayland`, VNC will not work reliably.
+
+> **`WaylandEnable=false` alone is not always enough for an autologin account.** That setting only controls the session offered on GDM's *greeter* screen — with `AutomaticLoginEnable=true`, GDM skips the greeter entirely and can launch whatever session is recorded for that user in `/var/lib/AccountsService/users/<username>` instead, ignoring `custom.conf`. If `echo $XDG_SESSION_TYPE` still reports `wayland` after setting `WaylandEnable=false` and rebooting, this is almost always why. Both `setup_kiosk.sh` and `step2.sh` now also pin the autologin user's saved session to an Xorg one directly in that AccountsService file (printed at the end of each script's run) — see [Session Still Reports Wayland After Disabling It](#session-still-reports-wayland-after-disabling-it) if you're hitting this on an install from before that fix.
 
 #### For GDM3 (Default Ubuntu Desktop):
 Edit `/etc/gdm3/custom.conf`:
@@ -457,3 +460,39 @@ A service that is "active (running)" is **not** proof the connection will work �
    journalctl -u x11vnc -b --no-pager | tail -50
    ```
    A repeated "timed out waiting for X session/Xauthority" means the machine isn't reaching a real X11 autologin session at all — check `echo $XDG_SESSION_TYPE` (should be `x11`, not `wayland`) and confirm GDM autologin is actually configured (`AutomaticLoginEnable=true` / `AutomaticLogin=<user>` in `/etc/gdm3/custom.conf`).
+
+---
+
+### Session Still Reports Wayland After Disabling It
+
+**Symptom:** `WaylandEnable=false` is present in `/etc/gdm3/custom.conf`, you've rebooted, but `echo $XDG_SESSION_TYPE` still prints `wayland` instead of `x11`.
+
+**Cause:** `WaylandEnable=false` only controls which session GDM's *greeter* (login screen) offers. With autologin enabled (`AutomaticLoginEnable=true`), GDM skips the greeter entirely — and for an autologin user, GDM commonly launches whatever session is recorded for that user in `/var/lib/AccountsService/users/<username>` (keys `Session=` / `XSession=`) instead of consulting `custom.conf` at all. If that file is missing, or still says `gnome` (the Wayland default), the autologin session stays Wayland no matter what `custom.conf` says.
+
+**Recommended fix:**
+
+1. **Re-run the installer/patch script** — both `setup_kiosk.sh` and `step2.sh` now also pin the autologin user's saved session to an available Xorg entry in AccountsService, not just `WaylandEnable=false` in `custom.conf`:
+   ```bash
+   chmod +x step2.sh
+   sudo ./step2.sh
+   ```
+   Its output includes a "Resulting GDM/session configuration" block showing exactly what was written to both files — check that before rebooting.
+
+2. **If it reports "No Xorg session found in /usr/share/xsessions/"**, your system genuinely has no X11 session installed (common on a minimal Ubuntu Desktop install) — `WaylandEnable=false` can't select a session that doesn't exist. Install one, e.g.:
+   ```bash
+   sudo apt install -y ubuntu-session
+   ```
+   then re-run `step2.sh` and reboot.
+
+3. **Verify manually** if you want to check both files yourself before rebooting:
+   ```bash
+   grep -E '^(WaylandEnable|AutomaticLogin)' /etc/gdm3/custom.conf
+   cat /var/lib/AccountsService/users/<your_username>
+   ls /usr/share/xsessions/          # confirm an *xorg*/*x11* entry exists
+   ```
+   The AccountsService file's `Session=` and `XSession=` values should name the Xorg `.desktop` file (minus the `.desktop` extension) found in the last command, e.g. `ubuntu-xorg`.
+
+4. **Reboot** to apply:
+   ```bash
+   sudo reboot
+   ```

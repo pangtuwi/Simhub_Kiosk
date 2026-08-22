@@ -213,6 +213,51 @@ fi
 
 echo -e "${GREEN}  [OK] GDM configured for X11 autologin.${NC}"
 
+# WaylandEnable=false above only affects GDM's *greeter* session picker.
+# For an autologin user specifically, GDM frequently launches whichever
+# session is recorded in that user's AccountsService file instead of
+# consulting custom.conf at all - a well-known reason "WaylandEnable=false
+# + reboot" alone still leaves $XDG_SESSION_TYPE as wayland for an
+# autologin account. Pin that user's saved session to an Xorg one directly.
+echo -e "${BLUE}[*] Pinning ${TARGET_USER}'s saved session to Xorg (AccountsService)...${NC}"
+XORG_SESSION=""
+for f in /usr/share/xsessions/*.desktop; do
+  [ -e "$f" ] || continue
+  base=$(basename "$f" .desktop)
+  case "$base" in
+    *xorg*|*-x11*|*X11*) XORG_SESSION="$base"; break ;;
+  esac
+done
+
+if [ -n "$XORG_SESSION" ]; then
+  ACCOUNTS_FILE="/var/lib/AccountsService/users/${TARGET_USER}"
+  sudo mkdir -p /var/lib/AccountsService/users
+  sudo touch "$ACCOUNTS_FILE"
+  if ! grep -q '^\[User\]' "$ACCOUNTS_FILE" 2>/dev/null; then
+    printf '[User]\n' | sudo tee -a "$ACCOUNTS_FILE" >/dev/null
+  fi
+  for key in Session XSession; do
+    if grep -q "^${key}=" "$ACCOUNTS_FILE" 2>/dev/null; then
+      sudo sed -i "s/^${key}=.*/${key}=${XORG_SESSION}/" "$ACCOUNTS_FILE"
+    else
+      sudo sed -i "/^\[User\]/a ${key}=${XORG_SESSION}" "$ACCOUNTS_FILE"
+    fi
+  done
+  echo -e "${GREEN}  [OK] ${TARGET_USER}'s saved session pinned to '${XORG_SESSION}' in ${ACCOUNTS_FILE}.${NC}"
+else
+  echo -e "${YELLOW}[WARNING] No Xorg session found in /usr/share/xsessions/ - only Wayland sessions${NC}"
+  echo -e "${YELLOW}          appear to be installed. x11vnc requires X11 and will not work until${NC}"
+  echo -e "${YELLOW}          one is available. Try: sudo apt install -y ubuntu-session${NC}"
+  echo -e "${YELLOW}          (or your desktop environment's Xorg session package), then re-run${NC}"
+  echo -e "${YELLOW}          this script.${NC}"
+fi
+
+echo -e "${BLUE}[*] Resulting GDM/session configuration:${NC}"
+grep -E '^(WaylandEnable|AutomaticLoginEnable|AutomaticLogin)=' "$GDM_CONF" 2>/dev/null | sed 's/^/    custom.conf: /'
+if [ -n "$XORG_SESSION" ]; then
+  grep -E '^(Session|XSession)=' "/var/lib/AccountsService/users/${TARGET_USER}" 2>/dev/null | sed "s/^/    ${TARGET_USER}: /"
+fi
+
 # 3. Create / update x11vnc service so remote desktop starts automatically
 echo -e "${BLUE}[2/4] Installing x11vnc systemd service...${NC}"
 
