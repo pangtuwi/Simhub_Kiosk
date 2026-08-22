@@ -41,7 +41,7 @@ echo -e "${GREEN}[*] Target URL set to: ${KIOSK_URL}${NC}"
 # 2. Update and Install Core Dependencies
 echo -e "${BLUE}[1/7] Updating package index and installing dependencies...${NC}"
 apt update
-apt install -y   unclutter   x11-xserver-utils   xdotool   x11vnc   curl   wget   sed
+apt install -y   unclutter   x11-xserver-utils   x11-utils   xdotool   x11vnc   curl   wget   sed
 
 # Install Chromium (handle snap / deb fallback)
 if ! command -v chromium &> /dev/null && ! command -v chromium-browser &> /dev/null; then
@@ -195,6 +195,29 @@ echo -e "${YELLOW}Please enter the password you want to use for Remote Desktop (
 x11vnc -storepasswd /etc/x11vnc.pass
 chmod 644 /etc/x11vnc.pass
 
+# x11vnc's "-auth guess" is unreliable against GDM3 autologin: the Xauthority
+# file location can vary by boot/session, and if x11vnc starts before the
+# autologin'd X session actually exists, it guesses wrong (or guesses nothing)
+# and silently refuses/drops incoming connections while still reporting as
+# "active (running)". This wrapper waits for a real, working Xauthority
+# instead of trusting the guess.
+cat << 'EOF' > /usr/local/bin/x11vnc-wait.sh
+#!/bin/bash
+# Wait for the autologin'd X session to actually exist, then resolve its
+# real Xauthority path instead of relying on x11vnc's -auth guess.
+for i in $(seq 1 60); do
+  XAUTH=$(find /run/user/*/gdm/Xauthority /run/gdm3/auth-for-*/database 2>/dev/null | head -n1)
+  if [ -n "$XAUTH" ] && DISPLAY=:0 XAUTHORITY="$XAUTH" xdpyinfo >/dev/null 2>&1; then
+    exec /usr/bin/x11vnc -forever -display :0 -auth "$XAUTH" \
+      -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
+  fi
+  sleep 2
+done
+echo "x11vnc-wait: timed out waiting for X session/Xauthority" >&2
+exit 1
+EOF
+chmod +x /usr/local/bin/x11vnc-wait.sh
+
 cat << 'EOF' > /etc/systemd/system/x11vnc.service
 [Unit]
 Description=x11vnc Remote Desktop Server
@@ -203,7 +226,7 @@ Wants=display-manager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
+ExecStart=/usr/local/bin/x11vnc-wait.sh
 Restart=on-failure
 RestartSec=5
 
@@ -213,6 +236,13 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now x11vnc
+
+# Open the firewall for VNC if ufw is active (silent connection failures from
+# Windows are commonly just port 5900 being blocked, with x11vnc itself fine)
+if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
+  echo -e "${GREEN}[*] ufw is active — allowing 5900/tcp for VNC${NC}"
+  ufw allow 5900/tcp
+fi
 
 # 8. Clean Keyring Prompts
 echo -e "${BLUE}[7/7] Resetting Keyrings for Unattended Auto-login...${NC}"

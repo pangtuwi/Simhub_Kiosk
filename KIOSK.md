@@ -35,6 +35,7 @@ This guide details the complete configuration process for transforming a laptop 
    - [Clearing Browser Cache & Ephemeral Incognito Mode](#clearing-browser-cache--ephemeral-incognito-mode)
 5. [Troubleshooting](#troubleshooting)
    - [Kiosk Returns to Login Page After a While](#kiosk-returns-to-login-page-after-a-while)
+   - [Cannot Connect from Windows (or macOS) via VNC](#cannot-connect-from-windows-or-macos-via-vnc)
 
 ---
 
@@ -237,7 +238,7 @@ xfconf-query -c xfce4-screensaver -p /lock/enabled --create -t bool -s false 2>/
    sudo chmod 644 /etc/x11vnc.pass
    ```
 
-3. The installer creates `/etc/systemd/system/x11vnc.service` automatically:
+3. The installer creates `/etc/systemd/system/x11vnc.service` automatically, pointed at a small wrapper (`/usr/local/bin/x11vnc-wait.sh`) rather than calling `x11vnc` directly:
    ```ini
    [Unit]
    Description=x11vnc Remote Desktop Server
@@ -246,13 +247,14 @@ xfconf-query -c xfce4-screensaver -p /lock/enabled --create -t bool -s false 2>/
 
    [Service]
    Type=simple
-   ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
+   ExecStart=/usr/local/bin/x11vnc-wait.sh
    Restart=on-failure
    RestartSec=5
 
    [Install]
    WantedBy=graphical.target
    ```
+   The wrapper exists because `x11vnc -auth guess` is unreliable against GDM3 autologin: the Xauthority file's location can vary by boot/session, and if x11vnc starts before the autologin'd X session actually exists, it guesses wrong (or finds nothing) and silently refuses or drops every incoming connection — while `systemctl status` still reports it as `active (running)`. The wrapper instead polls for a real Xauthority file and a live display before launching x11vnc with an explicit `-auth` path. See [Cannot Connect from Windows (or macOS) via VNC](#cannot-connect-from-windows-or-macos-via-vnc) if you're hitting this.
 
 4. Enable and start the service:
    ```bash
@@ -411,3 +413,43 @@ journalctl -b -u lightdm
 # General system log
 journalctl -b --no-pager | grep -i "session\|sleep\|lock\|suspend" | tail -50
 ```
+
+---
+
+### Cannot Connect from Windows (or macOS) via VNC
+
+**Symptom:** `systemctl status x11vnc` reports `active (running)` and `sudo ss -tlnp | grep 5900` shows the port listening, but a VNC client on Windows (RealVNC Viewer, TightVNC) times out, gets "connection refused", or fails authentication even with the correct password.
+
+**Likely causes, in order of likelihood:**
+
+| Cause | Description |
+| :--- | :--- |
+| Stale/guessed Xauthority | `x11vnc -auth guess` picked the wrong (or no) Xauthority cookie for the current autologin session, so x11vnc is running but can't actually attach to display `:0` |
+| Boot-time race | x11vnc's systemd unit started before the autologin'd X session existed, so the guess above happened too early |
+| Firewall | `ufw` (or another firewall) is blocking port 5900/tcp |
+| Wrong IP | The IP address you're connecting to isn't the laptop's actual LAN-reachable address (e.g. it picked up a VPN/docker interface, or the DHCP lease changed since you last checked) |
+
+A service that is "active (running)" is **not** proof the connection will work — a wrong Xauthority guess still leaves the process alive and the port bound, it just can't service RFB connections correctly.
+
+**Recommended fix:**
+
+1. **Apply the resilience patch**, which replaces the plain `x11vnc -auth guess` unit with a wrapper that waits for the real session and resolves its actual Xauthority path, and opens the firewall if `ufw` is active:
+   ```bash
+   chmod +x step2.sh
+   sudo ./step2.sh
+   ```
+   No reinstall of Ubuntu is needed for this — it's a systemd unit and firewall change, not an OS-level problem.
+
+2. **Confirm the fix took effect:**
+   ```bash
+   systemctl status x11vnc
+   sudo ss -tlnp | grep 5900
+   sudo ufw status            # confirm 5900/tcp is allowed if ufw is active
+   hostname -I                # confirm which IP you should actually be connecting to
+   ```
+
+3. **If it still fails**, check whether the wrapper is stuck waiting for the session (it retries for up to two minutes before giving up):
+   ```bash
+   journalctl -u x11vnc -b --no-pager | tail -50
+   ```
+   A repeated "timed out waiting for X session/Xauthority" means the machine isn't reaching a real X11 autologin session at all — check `echo $XDG_SESSION_TYPE` (should be `x11`, not `wayland`) and confirm GDM autologin is actually configured (`AutomaticLoginEnable=true` / `AutomaticLogin=<user>` in `/etc/gdm3/custom.conf`).

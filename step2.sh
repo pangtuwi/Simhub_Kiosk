@@ -114,6 +114,36 @@ echo -e "${GREEN}  [OK] GDM configured for X11 autologin.${NC}"
 
 # 3. Create / update x11vnc service so remote desktop starts automatically
 echo -e "${BLUE}[2/4] Installing x11vnc systemd service...${NC}"
+
+# Ensure xdpyinfo is available for the wrapper's readiness check
+if ! command -v xdpyinfo &> /dev/null; then
+  sudo apt install -y x11-utils || true
+fi
+
+# x11vnc's "-auth guess" is unreliable against GDM3 autologin: the Xauthority
+# file location can vary by boot/session, and if x11vnc starts before the
+# autologin'd X session actually exists, it guesses wrong (or guesses nothing)
+# and silently refuses/drops incoming connections while still reporting as
+# "active (running)". This wrapper waits for a real, working Xauthority
+# instead of trusting the guess. This is the fix for "kiosk looks fine but
+# Windows/VNC still can't connect" surviving previous runs of this script.
+cat << 'EOF' | sudo tee /usr/local/bin/x11vnc-wait.sh >/dev/null
+#!/bin/bash
+# Wait for the autologin'd X session to actually exist, then resolve its
+# real Xauthority path instead of relying on x11vnc's -auth guess.
+for i in $(seq 1 60); do
+  XAUTH=$(find /run/user/*/gdm/Xauthority /run/gdm3/auth-for-*/database 2>/dev/null | head -n1)
+  if [ -n "$XAUTH" ] && DISPLAY=:0 XAUTHORITY="$XAUTH" xdpyinfo >/dev/null 2>&1; then
+    exec /usr/bin/x11vnc -forever -display :0 -auth "$XAUTH" \
+      -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
+  fi
+  sleep 2
+done
+echo "x11vnc-wait: timed out waiting for X session/Xauthority" >&2
+exit 1
+EOF
+sudo chmod +x /usr/local/bin/x11vnc-wait.sh
+
 cat << 'EOF' | sudo tee "$X11VNC_SERVICE" >/dev/null
 [Unit]
 Description=x11vnc Remote Desktop Server
@@ -122,7 +152,7 @@ Wants=display-manager.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -forever -display :0 -auth guess -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -repeat
+ExecStart=/usr/local/bin/x11vnc-wait.sh
 Restart=on-failure
 RestartSec=5
 
@@ -131,8 +161,15 @@ WantedBy=graphical.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now x11vnc || true
-echo -e "${GREEN}  [OK] x11vnc.service installed and enabled.${NC}"
+sudo systemctl restart x11vnc || sudo systemctl enable --now x11vnc || true
+echo -e "${GREEN}  [OK] x11vnc.service installed and enabled with Xauthority-wait wrapper.${NC}"
+
+# Open the firewall for VNC if ufw is active (silent connection failures from
+# Windows are commonly just port 5900 being blocked, with x11vnc itself fine)
+if command -v ufw &> /dev/null && sudo ufw status | grep -q "Status: active"; then
+  echo -e "${GREEN}  [OK] ufw is active — allowing 5900/tcp for VNC${NC}"
+  sudo ufw allow 5900/tcp
+fi
 
 # 4. Strengthen GNOME power and lock settings
 echo -e "${BLUE}[3/4] Applying GNOME / Xfce power management settings...${NC}"
@@ -217,4 +254,4 @@ echo -e "${YELLOW}To start the kiosk immediately without rebooting:${NC}"
 echo -e "  ${BLUE}bash ${KIOSK_SCRIPT} &${NC}"
 echo -e ""
 echo -e "${YELLOW}Or reboot to apply all settings cleanly:${NC}"
-echo -e "  ${BLUE}sudo reboot${NC}
+echo -e "  ${BLUE}sudo reboot${NC}"
