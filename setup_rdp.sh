@@ -310,6 +310,21 @@ cat > "${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh" <<'SCRIPTEOF'
 
 sleep 5
 
+# GDM autologin never transmits any credential through PAM, so the login
+# keyring stays locked no matter what it's named or how its password was
+# set - confirmed on real hardware even after removing pam_gnome_keyring.so
+# from /etc/pam.d/gdm-autologin entirely, ruling out PAM as the actor here.
+# The interactive "Authentication required" prompt is the secret-service's
+# own prompter, triggered independently the first time something (grdctl,
+# below) touches the still-locked collection. --login and --unlock are two
+# separate gnome-keyring-daemon modes (not combinable flags, as far as
+# documented) that both accept a password on stdin to unlock the login
+# keyring; --login is what pam_gnome_keyring.so itself uses internally.
+# Try both independently, each ignoring its own failure, rather than risk
+# an invalid combined-flag invocation silently doing nothing.
+echo -n "" | gnome-keyring-daemon --login 2>/dev/null
+echo -n "" | gnome-keyring-daemon --unlock 2>/dev/null
+
 CERT_DIR="$HOME/.local/share/gnome-remote-desktop-certs"
 CRED_FILE="${CERT_DIR}/rdp-credentials.conf"
 
