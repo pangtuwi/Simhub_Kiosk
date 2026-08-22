@@ -9,11 +9,22 @@
 #
 # GNOME's built-in Remote Desktop support works natively over Wayland via
 # PipeWire screen capture and needs no Xorg session at all. This script
-# configures it in "system" (headless-capable) mode, so it comes up on boot
-# for the autologin'd kiosk session the same way x11vnc was meant to, and is
-# reachable with a standard RDP client (Windows' built-in "Remote Desktop
-# Connection" / mstsc, or Microsoft Remote Desktop on macOS) instead of a VNC
-# client.
+# configures it in PER-SESSION mode - the same mechanism as GNOME Settings
+# > Sharing > Remote Desktop - which mirrors the kiosk's actual running
+# autologin'd session, and is reachable with a standard RDP client (Windows'
+# built-in "Remote Desktop Connection" / mstsc, or Microsoft Remote Desktop
+# on macOS) instead of a VNC client.
+#
+# Deliberately NOT "system"/headless mode (`grdctl --system`): that spins up
+# a brand-new, separate session per RDP login rather than mirroring the one
+# already on screen, and - confirmed on real hardware - refuses to do so
+# when the target user already has an active session (the autologin'd kiosk
+# session itself), failing at login with "there is already a local session
+# running". Per-session mode shares the actual live session instead, which
+# is what a kiosk needs.
+#
+# Requires the kiosk user to already be logged in (true for an autologin'd
+# kiosk) - it configures RDP against that live session's own D-Bus bus.
 #
 # Safe to run multiple times. Does not remove or disable x11vnc — the two
 # can coexist; use whichever one actually works on your system.
@@ -106,7 +117,7 @@ if [ "$ASSUME_YES" -ne 1 ]; then
 fi
 
 # 1. Install gnome-remote-desktop -------------------------------------------
-echo -e "${BLUE}[1/4] Installing gnome-remote-desktop...${NC}"
+echo -e "${BLUE}[1/5] Installing gnome-remote-desktop...${NC}"
 apt-get update -qq || true
 if ! apt-get install -y gnome-remote-desktop; then
   echo -e "${RED}[ERROR] Could not install gnome-remote-desktop. This desktop environment${NC}"
@@ -120,9 +131,41 @@ if ! command -v grdctl &> /dev/null; then
   exit 1
 fi
 
-# 2. Generate a self-signed TLS certificate ----------------------------------
-echo -e "${BLUE}[2/4] Configuring TLS certificate...${NC}"
-CERT_DIR="/etc/gnome-remote-desktop/certs"
+# 2. Disable system/headless mode if a previous run enabled it --------------
+# It actively conflicts with per-session mode: it binds port 3389 itself and
+# tries to spawn a new session on login, which fails outright when the
+# target user already has one - exactly the "already a local session
+# running" error. Stop it so per-session mode can bind the port instead.
+echo -e "${BLUE}[2/5] Disabling system/headless RDP mode if previously enabled...${NC}"
+if systemctl is-enabled gnome-remote-desktop.service &> /dev/null || systemctl is-active gnome-remote-desktop.service &> /dev/null; then
+  systemctl disable --now gnome-remote-desktop.service 2>/dev/null || true
+  echo -e "${GREEN}  [OK] Stopped and disabled the system/headless gnome-remote-desktop.service.${NC}"
+else
+  echo -e "${GREEN}  [OK] System/headless mode was not enabled.${NC}"
+fi
+command -v grdctl &> /dev/null && grdctl --system rdp disable 2>/dev/null || true
+
+# 3. Confirm the kiosk user actually has a live session ----------------------
+echo -e "${BLUE}[3/5] Checking for ${TARGET_USER}'s active session...${NC}"
+USER_UID=$(id -u "$TARGET_USER")
+USER_BUS_PATH="/run/user/${USER_UID}/bus"
+if [ ! -S "$USER_BUS_PATH" ]; then
+  echo -e "${RED}[ERROR] No active session bus found for ${TARGET_USER} at ${USER_BUS_PATH}.${NC}"
+  echo -e "${RED}        Per-session RDP mode configures the user's already-running graphical${NC}"
+  echo -e "${RED}        session, so ${TARGET_USER} needs to actually be logged in first (true${NC}"
+  echo -e "${RED}        for an autologin'd kiosk once it's booted). Log in, then re-run this script.${NC}"
+  exit 1
+fi
+USER_BUS="unix:path=${USER_BUS_PATH}"
+as_target_user() {
+  sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/${USER_UID}" DBUS_SESSION_BUS_ADDRESS="$USER_BUS" "$@"
+}
+echo -e "${GREEN}  [OK] Found an active session bus for ${TARGET_USER}.${NC}"
+
+# 4. Generate a self-signed TLS certificate, owned by the kiosk user ---------
+echo -e "${BLUE}[4/5] Configuring TLS certificate...${NC}"
+TARGET_USER_HOME=$(eval echo "~${TARGET_USER}")
+CERT_DIR="${TARGET_USER_HOME}/.local/share/gnome-remote-desktop-certs"
 CERT_FILE="${CERT_DIR}/rdp-tls.crt"
 KEY_FILE="${CERT_DIR}/rdp-tls.key"
 mkdir -p "$CERT_DIR"
@@ -136,49 +179,24 @@ else
   echo -e "${GREEN}  [OK] Certificate already exists at ${CERT_FILE}, leaving it in place.${NC}"
 fi
 
-# The system-mode gnome-remote-desktop-daemon runs as the dedicated
-# "gnome-remote-desktop" system user the package creates (confirmed on real
-# hardware: /etc/gnome-remote-desktop itself is owned by that user), not
-# root. Since this script runs the mkdir/openssl calls above via sudo, the
-# certs directory and key end up root-owned - unreadable by the daemon's
-# own user. That reproducibly logs "RDP TLS certificate and key not yet
-# configured properly" and never binds the RDP listener on every restart,
-# not just at boot; chown the cert dir to the daemon's user so it can
-# actually read its own key.
-if id gnome-remote-desktop &> /dev/null; then
-  chown -R gnome-remote-desktop:gnome-remote-desktop "$CERT_DIR"
-else
-  echo -e "${YELLOW}[WARNING] System user 'gnome-remote-desktop' not found - leaving cert${NC}"
-  echo -e "${YELLOW}          ownership as-is. If RDP still won't bind after this script${NC}"
-  echo -e "${YELLOW}          finishes, check which user gnome-remote-desktop.service runs as${NC}"
-  echo -e "${YELLOW}          (systemctl cat gnome-remote-desktop.service) and chown ${CERT_DIR}${NC}"
-  echo -e "${YELLOW}          to that user.${NC}"
-fi
+# Per-session mode runs as the logged-in user, not a dedicated system
+# account (that was --system mode's own, different, permissions bug -
+# fixed separately when that mode was still in use). The cert must be
+# owned by TARGET_USER, not root, or the exact same class of failure
+# ("TLS certificate and key not yet configured properly") recurs here too.
+chown -R "${TARGET_USER}:${TARGET_USER}" "$CERT_DIR"
 chmod 700 "$CERT_DIR"
 chmod 600 "$KEY_FILE"
 chmod 644 "$CERT_FILE"
 
-# 3. Configure GNOME Remote Desktop (system/headless mode) -------------------
-echo -e "${BLUE}[3/4] Configuring RDP via grdctl --system...${NC}"
-grdctl --system rdp set-tls-cert "$CERT_FILE"
-grdctl --system rdp set-tls-key "$KEY_FILE"
-grdctl --system rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
-grdctl --system rdp enable
+# 5. Configure GNOME Remote Desktop in per-session mode ----------------------
+echo -e "${BLUE}[5/5] Configuring RDP via grdctl (per-session)...${NC}"
+as_target_user grdctl rdp set-tls-cert "$CERT_FILE"
+as_target_user grdctl rdp set-tls-key "$KEY_FILE"
+as_target_user grdctl rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
+as_target_user grdctl rdp enable
 
-systemctl daemon-reload
-systemctl enable gnome-remote-desktop.service
-# Always restart (not just "enable --now"): if the daemon was already
-# running from a previous boot/run, "enable --now" is a no-op that leaves
-# it running with whatever config it read at its own startup - it does not
-# reload just because grdctl wrote new config. Confirmed on real hardware:
-# the service can come up at boot logging "RDP TLS certificate and key not
-# yet configured properly" and never actually bind its listening socket,
-# even though `grdctl --system status` reports everything correctly
-# configured moments later. A restart forces it to re-read the current
-# config from a clean start.
-systemctl restart gnome-remote-desktop.service
-
-echo -e "${GREEN}  [OK] gnome-remote-desktop configured and restarted.${NC}"
+echo -e "${GREEN}  [OK] Per-session RDP configured for ${TARGET_USER}.${NC}"
 
 echo -e "${BLUE}[*] Verifying RDP is actually listening on port 3389...${NC}"
 LISTENING=""
@@ -192,23 +210,19 @@ done
 if [ -n "$LISTENING" ]; then
   echo -e "${GREEN}  [OK] Port 3389 is listening.${NC}"
 else
-  echo -e "${RED}[ERROR] Port 3389 is still not listening after restarting the service.${NC}"
-  echo -e "${RED}        RDP will not be reachable. Recent logs:${NC}"
-  journalctl -u gnome-remote-desktop -b --no-pager | tail -20 | sed 's/^/    /'
+  echo -e "${RED}[ERROR] Port 3389 is still not listening.${NC}"
+  echo -e "${RED}        RDP will not be reachable. Current status:${NC}"
+  as_target_user grdctl status 2>&1 | sed 's/^/    /' || true
 fi
 
-# 4. Open the firewall for RDP if ufw is active -------------------------------
-echo -e "${BLUE}[4/4] Checking firewall...${NC}"
+# Open the firewall for RDP if ufw is active ---------------------------------
 if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
   echo -e "${GREEN}  [OK] ufw is active — allowing 3389/tcp for RDP${NC}"
   ufw allow 3389/tcp
-else
-  echo -e "${GREEN}  [OK] ufw is not active — nothing to open.${NC}"
 fi
 
-echo -e "${BLUE}[*] Service status:${NC}"
-systemctl status gnome-remote-desktop.service --no-pager -l | sed 's/^/    /'
-grdctl --system status 2>&1 | sed 's/^/    /' || true
+echo -e "${BLUE}[*] RDP status:${NC}"
+as_target_user grdctl status 2>&1 | sed 's/^/    /' || true
 
 IP_ADDR=$(hostname -I | awk '{print $1}')
 

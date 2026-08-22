@@ -291,9 +291,13 @@ sudo ./setup_rdp.sh
 This configures **GNOME's built-in Remote Desktop support** (`gnome-remote-desktop` / `grdctl`), which works natively over Wayland via PipeWire screen capture — it needs no Xorg session, and is the modern, actually-Wayland-compatible replacement for x11vnc-style physical-display mirroring. Specifically, it:
 
 1. Installs `gnome-remote-desktop`.
-2. Generates a self-signed TLS certificate under `/etc/gnome-remote-desktop/certs/` (reused on subsequent runs).
-3. Configures RDP credentials and enables it in **system** (headless-capable) mode via `grdctl --system`, so it's available for the autologin'd kiosk session on boot, the same way x11vnc was meant to be.
-4. Opens `3389/tcp` in `ufw` if active.
+2. Disables GNOME Remote Desktop's **system/headless mode** if a previous run enabled it (`grdctl --system`, `gnome-remote-desktop.service`) — see the note below on why that mode is the wrong one for a kiosk.
+3. Confirms the kiosk user already has a live graphical session (true once an autologin'd kiosk has booted).
+4. Generates a self-signed TLS certificate under `~<kiosk-user>/.local/share/gnome-remote-desktop-certs/` (reused on subsequent runs), owned by the kiosk user.
+5. Configures RDP credentials and enables it in **per-session** mode via `grdctl rdp ...` run against that user's own live session — the same mechanism as GNOME Settings → Sharing → Remote Desktop, mirroring the actual visible kiosk screen.
+6. Opens `3389/tcp` in `ufw` if active.
+
+**Why per-session mode, not `--system`/headless:** GNOME Remote Desktop's system/headless mode doesn't mirror an already-running session — it spins up a *separate, new* session per RDP login, the way a VDI/remote-login setup would want. Confirmed on real hardware: it refuses to do this when the target user already has an active session (the autologin'd kiosk session itself), and login fails with **"there is already a local session running"**. Per-session mode shares the actual live session instead, which is what a kiosk needs — you see and can interact with the same screen physically showing on the machine.
 
 Flags: `--user <name>` for the kiosk login user (detection only), `--rdp-user <name>` / `--rdp-password <pass>` to set the RDP login credentials non-interactively, `-y` to skip confirmation. Run `sudo ./setup_rdp.sh --help` for details. It's safe to run alongside an existing x11vnc setup — the two don't conflict, and you can use whichever one actually works on your hardware.
 

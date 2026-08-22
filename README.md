@@ -35,6 +35,8 @@ sudo ./setup_rdp.sh
 ```
 It'll prompt for an RDP password (or pass `--rdp-password <pass>` / `--rdp-user <name>` / `-y` for unattended runs). Connect from Windows using the built-in **Remote Desktop Connection** app (`mstsc`) instead of a VNC client — enter the kiosk's IP, then the username/password you set. On macOS, use the **Microsoft Remote Desktop** app. It's safe to run alongside an existing x11vnc setup; the two don't conflict.
 
+It configures **per-session** RDP sharing (mirroring the kiosk's actual autologin'd screen, requires that user to already be logged in — true once the kiosk has booted) rather than GNOME's "system"/headless mode, which spins up a separate new session per login instead of mirroring the real one and fails outright with "there is already a local session running" when the kiosk user is already logged in, as confirmed on real hardware. See [KIOSK.md's 6b section](KIOSK.md#6b-rdp-fallback-for-wayland-only-systems) for the full explanation.
+
 ## Day-to-Day Operations
 
 ### Close the Kiosk Browser and Open a Terminal
