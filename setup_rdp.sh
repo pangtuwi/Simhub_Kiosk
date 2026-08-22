@@ -195,8 +195,14 @@ as_target_user grdctl rdp set-tls-cert "$CERT_FILE"
 as_target_user grdctl rdp set-tls-key "$KEY_FILE"
 as_target_user grdctl rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
 as_target_user grdctl rdp enable
+# GNOME Remote Desktop defaults new RDP configs to view-only (screen visible,
+# keyboard/mouse input ignored) - confirmed on real hardware: connected fine
+# from both Windows and macOS clients, but clicks and typing did nothing
+# until this was disabled. A kiosk needs interactive control, not just a
+# view, so always turn it off.
+as_target_user grdctl rdp disable-view-only
 
-echo -e "${GREEN}  [OK] Per-session RDP configured for ${TARGET_USER}.${NC}"
+echo -e "${GREEN}  [OK] Per-session RDP configured for ${TARGET_USER} (interactive, not view-only).${NC}"
 
 echo -e "${BLUE}[*] Verifying RDP is actually listening on port 3389...${NC}"
 LISTENING=""
@@ -215,6 +221,15 @@ else
   as_target_user grdctl status 2>&1 | sed 's/^/    /' || true
 fi
 
+RDP_STATUS_OUTPUT=$(as_target_user grdctl status 2>&1 || true)
+if echo "$RDP_STATUS_OUTPUT" | grep -q "View-only: yes"; then
+  echo -e "${RED}[ERROR] View-only is still enabled — clicks and keyboard input will be${NC}"
+  echo -e "${RED}        ignored even though the screen is visible. 'grdctl rdp${NC}"
+  echo -e "${RED}        disable-view-only' did not take effect; check the RDP status below.${NC}"
+else
+  echo -e "${GREEN}  [OK] View-only is disabled — clicks and keyboard input will work.${NC}"
+fi
+
 # Open the firewall for RDP if ufw is active ---------------------------------
 if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
   echo -e "${GREEN}  [OK] ufw is active — allowing 3389/tcp for RDP${NC}"
@@ -222,7 +237,7 @@ if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
 fi
 
 echo -e "${BLUE}[*] RDP status:${NC}"
-as_target_user grdctl status 2>&1 | sed 's/^/    /' || true
+echo "$RDP_STATUS_OUTPUT" | sed 's/^/    /'
 
 IP_ADDR=$(hostname -I | awk '{print $1}')
 

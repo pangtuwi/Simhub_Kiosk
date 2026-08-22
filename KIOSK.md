@@ -295,9 +295,12 @@ This configures **GNOME's built-in Remote Desktop support** (`gnome-remote-deskt
 3. Confirms the kiosk user already has a live graphical session (true once an autologin'd kiosk has booted).
 4. Generates a self-signed TLS certificate under `~<kiosk-user>/.local/share/gnome-remote-desktop-certs/` (reused on subsequent runs), owned by the kiosk user.
 5. Configures RDP credentials and enables it in **per-session** mode via `grdctl rdp ...` run against that user's own live session — the same mechanism as GNOME Settings → Sharing → Remote Desktop, mirroring the actual visible kiosk screen.
-6. Opens `3389/tcp` in `ufw` if active.
+6. Disables **view-only mode** (`grdctl rdp disable-view-only`) — see the note below on why this is needed.
+7. Opens `3389/tcp` in `ufw` if active.
 
 **Why per-session mode, not `--system`/headless:** GNOME Remote Desktop's system/headless mode doesn't mirror an already-running session — it spins up a *separate, new* session per RDP login, the way a VDI/remote-login setup would want. Confirmed on real hardware: it refuses to do this when the target user already has an active session (the autologin'd kiosk session itself), and login fails with **"there is already a local session running"**. Per-session mode shares the actual live session instead, which is what a kiosk needs — you see and can interact with the same screen physically showing on the machine.
+
+**Why view-only is explicitly disabled:** GNOME Remote Desktop's default for a newly-configured RDP session is view-only — confirmed on real hardware: connecting from both Windows and macOS clients worked (screen visible, login successful), but clicking or typing did nothing at all, with no error or indication why. `grdctl rdp disable-view-only` is what actually enables mouse/keyboard control, separate from `grdctl rdp enable` (which only turns RDP itself on). `setup_rdp.sh` checks for this explicitly in its output ("View-only is disabled — clicks and keyboard input will work").
 
 Flags: `--user <name>` for the kiosk login user (detection only), `--rdp-user <name>` / `--rdp-password <pass>` to set the RDP login credentials non-interactively, `-y` to skip confirmation. Run `sudo ./setup_rdp.sh --help` for details. It's safe to run alongside an existing x11vnc setup — the two don't conflict, and you can use whichever one actually works on your hardware.
 
