@@ -204,6 +204,75 @@ as_target_user grdctl rdp disable-view-only
 
 echo -e "${GREEN}  [OK] Per-session RDP configured for ${TARGET_USER} (interactive, not view-only).${NC}"
 
+# Re-assert this config on every login via autostart, not just once now.
+# Confirmed on real hardware: after a reboot, the TLS cert and view-only
+# setting survived but the RDP username/password came back empty ("(empty)"
+# in `grdctl status`) even though nothing else changed. This kiosk's own
+# setup deliberately wipes ~/.local/share/keyrings/* to avoid an autologin
+# keyring-unlock password prompt (see KIOSK.md's Keyring Password Prompt
+# Removal step) - and GNOME Remote Desktop stores RDP credentials via that
+# same keyring/secret-service, so a keyring left unlockable-but-empty for
+# autologin's sake means the RDP password specifically doesn't survive past
+# the session it was set in. Rather than depend on the keyring working,
+# re-supply the full config fresh on every login instead.
+echo -e "${BLUE}[*] Installing autostart entry to re-apply RDP config on every login...${NC}"
+CRED_FILE="${CERT_DIR}/rdp-credentials.conf"
+# %q-quote both values: a password containing shell metacharacters ($, ",
+# ', etc. - entirely plausible in a real password) would otherwise corrupt
+# or break parsing when this file is later `source`d by the autostart
+# script below. Confirmed by testing: an unquoted password with a literal
+# '$' and mixed quotes caused a syntax error on source and silently
+# dropped/mangled the value.
+{
+  printf 'RDP_USER=%q\n' "$RDP_USER"
+  printf 'RDP_PASSWORD=%q\n' "$RDP_PASSWORD"
+} > "$CRED_FILE"
+chown "${TARGET_USER}:${TARGET_USER}" "$CRED_FILE"
+chmod 600 "$CRED_FILE"
+
+AUTOSTART_SCRIPTS_DIR="${TARGET_USER_HOME}/.config/autostart-scripts"
+AUTOSTART_DIR="${TARGET_USER_HOME}/.config/autostart"
+mkdir -p "$AUTOSTART_SCRIPTS_DIR" "$AUTOSTART_DIR"
+
+cat > "${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh" <<'SCRIPTEOF'
+#!/bin/bash
+# Re-applies GNOME Remote Desktop's per-session RDP config on every login,
+# since credentials specifically do not reliably survive a reboot on a
+# kiosk with a deliberately empty/unlockable keyring. Safe to run every
+# login - grdctl calls are idempotent.
+
+sleep 5
+
+CERT_DIR="$HOME/.local/share/gnome-remote-desktop-certs"
+CRED_FILE="${CERT_DIR}/rdp-credentials.conf"
+
+if [ -f "$CRED_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$CRED_FILE"
+  grdctl rdp set-tls-cert "${CERT_DIR}/rdp-tls.crt"
+  grdctl rdp set-tls-key "${CERT_DIR}/rdp-tls.key"
+  grdctl rdp set-credentials "$RDP_USER" "$RDP_PASSWORD"
+  grdctl rdp enable
+  grdctl rdp disable-view-only
+fi
+SCRIPTEOF
+chmod +x "${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh"
+chown "${TARGET_USER}:${TARGET_USER}" "${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh"
+
+cat > "${AUTOSTART_DIR}/rdp-reassert.desktop" <<DESKTOPEOF
+[Desktop Entry]
+Type=Application
+Exec=${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=RDP Config Reassert
+Comment=Re-applies GNOME Remote Desktop RDP configuration on login
+DESKTOPEOF
+chown "${TARGET_USER}:${TARGET_USER}" "${AUTOSTART_DIR}/rdp-reassert.desktop"
+
+echo -e "${GREEN}  [OK] Installed autostart entry - RDP config will be re-applied on every login.${NC}"
+
 echo -e "${BLUE}[*] Verifying RDP is actually listening on port 3389...${NC}"
 LISTENING=""
 for i in 1 2 3 4 5; do
