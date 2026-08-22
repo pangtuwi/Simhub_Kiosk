@@ -243,6 +243,17 @@ cat > "${AUTOSTART_SCRIPTS_DIR}/rdp-reassert.sh" <<'SCRIPTEOF'
 
 sleep 5
 
+# Autologin never types a password, so GNOME Keyring's normal auto-unlock
+# (pam_gnome_keyring.so, keyed off the interactively-entered login
+# password) never actually fires here - not even for a keyring
+# deliberately created with a blank password. Confirmed on real hardware:
+# the "Authentication required, the login keyring did not get unlocked"
+# prompt came back on a later reboot even after wiping
+# ~/.local/share/keyrings/* and recreating it blank once - that earlier
+# fix depended on unlock-at-creation timing that isn't reliable across
+# every boot. Unlock it explicitly here instead of depending on that.
+echo -n "" | gnome-keyring-daemon --unlock 2>/dev/null
+
 CERT_DIR="$HOME/.local/share/gnome-remote-desktop-certs"
 CRED_FILE="${CERT_DIR}/rdp-credentials.conf"
 
