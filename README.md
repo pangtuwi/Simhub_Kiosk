@@ -26,6 +26,15 @@ chmod +x diagnosis.sh
 ```
 It makes no changes to the system — it just collects GDM config, available desktop sessions, the AccountsService session preference, VNC/firewall state, GPU info, and SSH state into one place. (It calls `sudo` for the couple of commands that need it — e.g. `ss -tlnp` — so you'll be prompted for your password partway through if you're not already root.)
 
+## If Your System Has No Xorg Session At All (RDP Fallback)
+
+`x11vnc` requires an X11 session and cannot work on a machine with no Xorg desktop session installed — some Ubuntu builds genuinely don't ship or offer one (confirmed on real hardware: `/usr/share/xsessions/` didn't exist at all, only `/usr/share/wayland-sessions/`). If `step2.sh`/`setup_kiosk.sh` report they couldn't find or install an Xorg session, forcing X11 isn't going to work on that machine — use `setup_rdp.sh` instead, which configures GNOME's built-in Remote Desktop (RDP) support. It works natively over Wayland via PipeWire screen capture, so it needs no Xorg session at all:
+```bash
+chmod +x setup_rdp.sh
+sudo ./setup_rdp.sh
+```
+It'll prompt for an RDP password (or pass `--rdp-password <pass>` / `--rdp-user <name>` / `-y` for unattended runs). Connect from Windows using the built-in **Remote Desktop Connection** app (`mstsc`) instead of a VNC client — enter the kiosk's IP, then the username/password you set. On macOS, use the **Microsoft Remote Desktop** app. It's safe to run alongside an existing x11vnc setup; the two don't conflict.
+
 ## Day-to-Day Operations
 
 ### Close the Kiosk Browser and Open a Terminal

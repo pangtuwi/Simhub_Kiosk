@@ -24,6 +24,7 @@ This guide details the complete configuration process for transforming a laptop 
    - [4. Kiosk Autostart Script Setup](#4-kiosk-autostart-script-setup)
    - [5. Screen Saver & DPMS Blanking Prevention](#5-screen-saver--dpms-blanking-prevention)
    - [6. Remote Desktop Setup (x11vnc)](#6-remote-desktop-setup-x11vnc)
+   - [6b. RDP Fallback for Wayland-Only Systems](#6b-rdp-fallback-for-wayland-only-systems)
    - [7. Keyring Password Prompt Removal](#7-keyring-password-prompt-removal)
 3. [Connecting Remotely](#connecting-remotely)
    - [Connecting from macOS](#connecting-from-macos)
@@ -45,6 +46,8 @@ This guide details the complete configuration process for transforming a laptop 
 A complete automation script `setup_kiosk.sh` is provided in this repository.
 
 **`setup_kiosk.sh` is a complete, self-contained installer.** On a clean/fresh Ubuntu install it is the only script you need — it already includes the browser restart loop, GNOME/Xfce power hardening, and the x11vnc remote-desktop resilience fixes (Xauthority-wait wrapper, firewall rule) described in [Troubleshooting](#troubleshooting) below. Do **not** also run `step2.sh` afterwards; there is nothing left for it to add on a system `setup_kiosk.sh` just configured. `step2.sh` exists solely to bring an *existing* install (set up before these fixes were added, or one you're unsure is current) up to date in place, without a clean reinstall — see [Applying the Resilience Patch](#kiosk-returns-to-login-page-after-a-while) below.
+
+If your system turns out to have **no Xorg session available at all** (some Ubuntu builds don't ship one — `x11vnc` cannot work there regardless of configuration), use `setup_rdp.sh` instead/in addition — see [6b. RDP Fallback for Wayland-Only Systems](#6b-rdp-fallback-for-wayland-only-systems).
 
 ### Quick Start:
 ```bash
@@ -276,6 +279,28 @@ xfconf-query -c xfce4-screensaver -p /lock/enabled --create -t bool -s false 2>/
 
 ---
 
+### 6b. RDP Fallback for Wayland-Only Systems
+
+`x11vnc` fundamentally requires an X11 session — no amount of `WaylandEnable=false` or AccountsService configuration can make it work if the machine has no Xorg desktop session at all. This is a real, confirmed situation on some Ubuntu builds: `/usr/share/xsessions/` can be entirely absent, with only `/usr/share/wayland-sessions/` present, and no Xorg session package available in the repos to install one (`apt install gnome-session-xsession` failing with "Unable to locate package" is the tell).
+
+If `step2.sh`/`setup_kiosk.sh` report they couldn't find or install an Xorg session, stop trying to force X11 and use `setup_rdp.sh` instead:
+```bash
+chmod +x setup_rdp.sh
+sudo ./setup_rdp.sh
+```
+This configures **GNOME's built-in Remote Desktop support** (`gnome-remote-desktop` / `grdctl`), which works natively over Wayland via PipeWire screen capture — it needs no Xorg session, and is the modern, actually-Wayland-compatible replacement for x11vnc-style physical-display mirroring. Specifically, it:
+
+1. Installs `gnome-remote-desktop`.
+2. Generates a self-signed TLS certificate under `/etc/gnome-remote-desktop/certs/` (reused on subsequent runs).
+3. Configures RDP credentials and enables it in **system** (headless-capable) mode via `grdctl --system`, so it's available for the autologin'd kiosk session on boot, the same way x11vnc was meant to be.
+4. Opens `3389/tcp` in `ufw` if active.
+
+Flags: `--user <name>` for the kiosk login user (detection only), `--rdp-user <name>` / `--rdp-password <pass>` to set the RDP login credentials non-interactively, `-y` to skip confirmation. Run `sudo ./setup_rdp.sh --help` for details. It's safe to run alongside an existing x11vnc setup — the two don't conflict, and you can use whichever one actually works on your hardware.
+
+**Connecting is different from VNC**: use Windows' built-in **Remote Desktop Connection** app (`mstsc`), or **Microsoft Remote Desktop** on macOS — not a VNC client, and port `3389` instead of `5900`. Enter the kiosk's IP address, then the username/password `setup_rdp.sh` configured. Expect a certificate-trust warning on first connect (self-signed cert) — accept it to continue; this is expected and fine on a private LAN kiosk.
+
+---
+
 ### 7. Keyring Password Prompt Removal
 
 Auto-login bypasses entering a user password, leaving the default GNOME Keyring locked. To prevent the *"The login keyring did not get unlocked"* popup:
@@ -478,10 +503,11 @@ A service that is "active (running)" is **not** proof the connection will work �
    ```
    Its output includes a "Resulting GDM/session configuration" block showing exactly what was written to both files — check that before rebooting.
 
-2. **If it reports "No Xorg session found under /usr/share/xsessions/"**, your system genuinely has no X11 session installed at all — confirmed on real hardware via `ls /usr/share/xsessions/` returning "No such file or directory" while `/usr/share/wayland-sessions/` had the only session present. `WaylandEnable=false` can't select a session that doesn't exist, and no amount of config editing or rebooting fixes that. Both scripts now attempt to install one automatically (`gnome-session-xsession`, falling back to `xserver-xorg`/`xinit`/`ubuntu-session`) before giving up — if it still can't find one afterwards, check what's actually available and install it directly:
+2. **If it reports "No Xorg session found under /usr/share/xsessions/"**, your system genuinely has no X11 session installed at all — confirmed on real hardware via `ls /usr/share/xsessions/` returning "No such file or directory" while `/usr/share/wayland-sessions/` had the only session present. `WaylandEnable=false` can't select a session that doesn't exist, and no amount of config editing or rebooting fixes that. Both scripts now attempt to install one automatically (`gnome-session-xsession`, falling back to `xserver-xorg`/`xinit`/`ubuntu-session`) before giving up. **If `apt install gnome-session-xsession` (or the other candidates) fails with "Unable to locate package"**, this Ubuntu build doesn't offer an Xorg session at all — confirmed on real hardware. Forcing X11 is a dead end on that machine; stop here and use the RDP fallback instead: [6b. RDP Fallback for Wayland-Only Systems](#6b-rdp-fallback-for-wayland-only-systems). If some other X11-session-providing package genuinely is available under a different name, install it and continue:
    ```bash
-   apt search xsession 2>/dev/null | grep -i gnome
-   sudo apt install -y gnome-session-xsession
+   apt-cache search xsession
+   apt-cache search "on xorg"
+   sudo apt install -y <package found above>
    ls /usr/share/xsessions/          # should now show an *xorg* entry
    ```
    then re-run `step2.sh` and reboot.
