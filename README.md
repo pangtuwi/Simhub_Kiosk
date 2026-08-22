@@ -10,6 +10,7 @@ If you have already run the installer and want to apply kiosk stability improvem
 chmod +x step2.sh
 sudo ./step2.sh
 ```
+It's safe to run from any directory — every path it touches is resolved from the kiosk's login user's home directory, not from where you invoke it. If it's run from an already-root shell (`sudo -s`/`sudo -i` first) it can't tell who that login user is and will warn you; pass `--user <name>` to set it explicitly. Add `--url <url>` to override the detected kiosk URL, or `-y` to skip the confirmation prompt for unattended re-runs. Run `sudo ./step2.sh --help` for details.
 
 ## Day-to-Day Operations
 

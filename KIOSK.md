@@ -372,6 +372,8 @@ killall chromium-browser 2>/dev/null && bash ~/.config/autostart-scripts/kiosk.s
    - Disable GNOME and Xfce lock/sleep settings more completely.
    - Rewrite `~/.config/autostart-scripts/kiosk.sh` to use a browser restart loop so Chromium relaunches automatically if it exits or crashes.
 
+   It's safe to run from any directory — every path it touches is resolved from the kiosk's login user's home directory, not from your current working directory. It detects that user from `$SUDO_USER`; if you ran it from an already-root shell (`sudo -s`/`sudo -i` first) that's empty and it will warn you and fall back to `root`, which is wrong for almost every kiosk setup. Pass `--user <name>` to set it explicitly, `--url <url>` to override the detected kiosk URL, or `-y` to skip the confirmation summary it prints before making changes (useful for unattended re-runs). Run `sudo ./step2.sh --help` for the full flag list.
+
 2. **Manual steps** (if you prefer to apply the changes yourself):
 
    Disable GNOME power/lock settings:

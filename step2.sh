@@ -23,7 +23,68 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-TARGET_USER="${SUDO_USER:-$USER}"
+# --- Argument parsing -------------------------------------------------------
+# Note: the folder you run step2.sh *from* never matters for any of this —
+# every path below is resolved absolutely from the target user's home
+# directory, not from $PWD. What DOES matter is which user is detected as
+# the kiosk's login user; see the --user flag below.
+TARGET_USER_OVERRIDE=""
+URL_OVERRIDE=""
+ASSUME_YES=0
+
+usage() {
+  cat <<USAGE
+Usage: sudo ./step2.sh [--user USERNAME] [--url URL] [-y|--yes]
+
+  --user USERNAME   Explicitly set the kiosk's login user instead of relying
+                     on \$SUDO_USER autodetection. Use this if you ran
+                     step2.sh from an already-root shell (e.g. after
+                     'sudo -s' or 'sudo -i'), where \$SUDO_USER is empty and
+                     autodetection would otherwise silently fall back to
+                     'root' — the classic cause of "it didn't find my saved
+                     URL".
+  --url URL         Explicitly set the kiosk target URL instead of
+                     detecting it from the existing kiosk.sh.
+  -y, --yes         Skip the confirmation prompt and accept the
+                     detected/default values automatically (for unattended
+                     re-runs).
+  -h, --help        Show this help and exit.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --user) TARGET_USER_OVERRIDE="$2"; shift 2 ;;
+    --user=*) TARGET_USER_OVERRIDE="${1#*=}"; shift ;;
+    --url) URL_OVERRIDE="$2"; shift 2 ;;
+    --url=*) URL_OVERRIDE="${1#*=}"; shift ;;
+    -y|--yes) ASSUME_YES=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo -e "${RED}[ERROR] Unknown argument: $1${NC}"; usage; exit 1 ;;
+  esac
+done
+
+# --- Resolve the target user -------------------------------------------------
+if [ -n "$TARGET_USER_OVERRIDE" ]; then
+  TARGET_USER="$TARGET_USER_OVERRIDE"
+elif [ -n "$SUDO_USER" ]; then
+  TARGET_USER="$SUDO_USER"
+else
+  TARGET_USER="$USER"
+  echo -e "${YELLOW}[WARNING] \$SUDO_USER is not set, so the kiosk's login user could not be${NC}"
+  echo -e "${YELLOW}          auto-detected. This usually means step2.sh was run from an${NC}"
+  echo -e "${YELLOW}          already-root shell (e.g. 'sudo -s' / 'sudo -i' first, then${NC}"
+  echo -e "${YELLOW}          './step2.sh' with plain sudo already consumed). Falling back to${NC}"
+  echo -e "${YELLOW}          '${TARGET_USER}', which is almost certainly NOT your kiosk's real${NC}"
+  echo -e "${YELLOW}          login user. Re-run as: sudo ./step2.sh --user <your_kiosk_username>${NC}"
+fi
+
+if ! id "$TARGET_USER" &> /dev/null; then
+  echo -e "${RED}[ERROR] User '${TARGET_USER}' does not exist on this system.${NC}"
+  echo -e "${RED}        Re-run with: sudo ./step2.sh --user <your_kiosk_username>${NC}"
+  exit 1
+fi
+
 USER_HOME=$(eval echo "~$TARGET_USER")
 AUTOSTART_DIR="${USER_HOME}/.config/autostart-scripts"
 KIOSK_SCRIPT="${AUTOSTART_DIR}/kiosk.sh"
@@ -35,16 +96,22 @@ if [ "$TARGET_USER" = "root" ]; then
 fi
 
 echo -e "${GREEN}[*] Patching kiosk for user: ${TARGET_USER} (${USER_HOME})${NC}"
+echo -e "${GREEN}[*] Expecting existing kiosk script at: ${KIOSK_SCRIPT}${NC}"
 
 # 1. Detect existing kiosk URL and browser binary from kiosk.sh
 KIOSK_URL="http://localhost:5000"
 BROWSER_BIN="chromium-browser"
+URL_SOURCE="default (no existing kiosk.sh found)"
 
 if [ -f "$KIOSK_SCRIPT" ]; then
   DETECTED_URL=$(grep -oP '(?<=TARGET_URL=")[^"]+' "$KIOSK_SCRIPT" 2>/dev/null || true)
   if [ -n "$DETECTED_URL" ]; then
     KIOSK_URL="$DETECTED_URL"
+    URL_SOURCE="detected from ${KIOSK_SCRIPT}"
     echo -e "${GREEN}[*] Detected existing kiosk URL: ${KIOSK_URL}${NC}"
+  else
+    echo -e "${YELLOW}[WARNING] ${KIOSK_SCRIPT} exists but no TARGET_URL was found inside it.${NC}"
+    URL_SOURCE="default (TARGET_URL not found in existing kiosk.sh)"
   fi
 
   for bin in chromium-browser chromium google-chrome; do
@@ -53,6 +120,24 @@ if [ -f "$KIOSK_SCRIPT" ]; then
       break
     fi
   done
+else
+  echo -e "${YELLOW}[WARNING] No existing kiosk script found at ${KIOSK_SCRIPT}.${NC}"
+  # A kiosk.sh sitting under a *different* user's home is the tell-tale sign
+  # that TARGET_USER was guessed wrong rather than the install being fresh.
+  CANDIDATES=$(find /home /root -maxdepth 4 -path '*/.config/autostart-scripts/kiosk.sh' 2>/dev/null || true)
+  if [ -n "$CANDIDATES" ]; then
+    echo -e "${YELLOW}[WARNING] Found an existing kiosk.sh under a different user's home:${NC}"
+    echo "$CANDIDATES" | sed 's/^/    /'
+    echo -e "${YELLOW}          If one of these is yours, re-run with:${NC}"
+    echo -e "${YELLOW}            sudo ./step2.sh --user <that_username>${NC}"
+    echo -e "${YELLOW}          instead of letting it proceed with the default URL below.${NC}"
+  fi
+fi
+
+if [ -n "$URL_OVERRIDE" ]; then
+  KIOSK_URL="$URL_OVERRIDE"
+  URL_SOURCE="--url override"
+  echo -e "${GREEN}[*] Using explicitly provided kiosk URL: ${KIOSK_URL}${NC}"
 fi
 
 if ! command -v "$BROWSER_BIN" &> /dev/null; then
@@ -66,6 +151,22 @@ if ! command -v "$BROWSER_BIN" &> /dev/null; then
 fi
 
 echo -e "${GREEN}[*] Browser binary: ${BROWSER_BIN}${NC}"
+
+echo -e "${BLUE}------------------------------------------------------${NC}"
+echo -e "${BLUE}  Target user : ${TARGET_USER}${NC}"
+echo -e "${BLUE}  Kiosk script: ${KIOSK_SCRIPT}${NC}"
+echo -e "${BLUE}  Kiosk URL   : ${KIOSK_URL}  (${URL_SOURCE})${NC}"
+echo -e "${BLUE}------------------------------------------------------${NC}"
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  read -r -p "Proceed with these values? [Y/n] " CONFIRM
+  case "$CONFIRM" in
+    [nN]*)
+      echo -e "${RED}Aborted. Re-run with --user/--url to correct the detected values, or -y to skip this prompt.${NC}"
+      exit 1
+      ;;
+  esac
+fi
 
 # 2. Force GDM to use X11 instead of Wayland for VNC compatibility
 echo -e "${BLUE}[1/4] Disabling Wayland in GDM and preserving autologin...${NC}"
