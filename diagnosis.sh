@@ -75,6 +75,15 @@ run "port 5900 listening" 'sudo ss -tlnp 2>/dev/null | grep 5900 || echo "nothin
 run "ufw status" 'command -v ufw >/dev/null 2>&1 && sudo ufw status || echo "ufw not installed"'
 run "x11vnc recent logs" journalctl -u x11vnc -b --no-pager | tail -n 40
 
+section "RDP / GNOME Remote Desktop"
+run "gnome-remote-desktop installed?" 'dpkg -l | grep -i gnome-remote-desktop || echo "gnome-remote-desktop not installed"'
+run "gnome-remote-desktop.service status" systemctl status gnome-remote-desktop --no-pager -l
+run "grdctl --system status" sudo grdctl --system status
+run "TLS cert/key present" 'ls -la /etc/gnome-remote-desktop/certs/ 2>/dev/null || echo "no certs directory"'
+run "port 3389 listening" 'sudo ss -tlnp 2>/dev/null | grep 3389 || echo "nothing listening on 3389"'
+run "gnome-remote-desktop recent logs" journalctl -u gnome-remote-desktop -b --no-pager | tail -n 60
+run "any grd- processes running" 'ps aux | grep -i "[g]rd-" || echo "no grd- processes found"'
+
 section "SSH (noted as also not working)"
 run "sshd installed?" 'dpkg -l | grep -i openssh-server || echo "openssh-server not installed"'
 run "ssh.service status" systemctl status ssh --no-pager -l
